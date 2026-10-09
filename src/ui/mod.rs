@@ -281,13 +281,18 @@ fn tui_loop(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
                     let sel_0 = selected_noise_idx == 0;
                     lines.push(Line::from(vec![
                         Span::styled(if sel_0 { " ▶ RNNoise Suppression      " } else { "   RNNoise Suppression      " }, if sel_0 { Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD) } else { Style::default().fg(Color::White) }),
-                        Span::styled(if settings.rnnoise_enabled { "[ON]" } else { "[BYPASS]" }, if settings.rnnoise_enabled { Style::default().fg(Color::Green).add_modifier(Modifier::BOLD) } else { Style::default().fg(Color::DarkGray) }),
+                        Span::styled(if settings.rnnoise_enabled { "[ON]" } else { "[BYPASS (Dry Passthrough)]" }, if settings.rnnoise_enabled { Style::default().fg(Color::Green).add_modifier(Modifier::BOLD) } else { Style::default().fg(Color::Red).add_modifier(Modifier::BOLD) }),
                     ]));
                     // Denoise Blend
                     let sel_1 = selected_noise_idx == 1;
+                    let blend_val_str = if settings.rnnoise_enabled {
+                        format!("[{:.0}%]", settings.denoise_blend)
+                    } else {
+                        format!("[{:.0}% (Bypassed: 0%)]", settings.denoise_blend)
+                    };
                     lines.push(Line::from(vec![
                         Span::styled(if sel_1 { " ▶ Suppression Blend        " } else { "   Suppression Blend        " }, if sel_1 { Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD) } else { Style::default().fg(Color::White) }),
-                        Span::styled(format!("[{:.0}%]", settings.denoise_blend), Style::default().fg(Color::White)),
+                        Span::styled(blend_val_str, if settings.rnnoise_enabled { Style::default().fg(Color::White) } else { Style::default().fg(Color::DarkGray) }),
                     ]));
                     lines.push(Line::from(""));
 
@@ -296,25 +301,40 @@ fn tui_loop(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
                     let sel_2 = selected_noise_idx == 2;
                     lines.push(Line::from(vec![
                         Span::styled(if sel_2 { " ▶ Gate                     " } else { "   Gate                     " }, if sel_2 { Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD) } else { Style::default().fg(Color::White) }),
-                        Span::styled(if settings.gate_enabled { "[ON]" } else { "[OFF]" }, if settings.gate_enabled { Style::default().fg(Color::Green).add_modifier(Modifier::BOLD) } else { Style::default().fg(Color::DarkGray) }),
+                        Span::styled(if settings.gate_enabled { "[ON]" } else { "[BYPASS (Open Gate)]" }, if settings.gate_enabled { Style::default().fg(Color::Green).add_modifier(Modifier::BOLD) } else { Style::default().fg(Color::Red).add_modifier(Modifier::BOLD) }),
                     ]));
                     // Gate Aggressiveness
                     let sel_3 = selected_noise_idx == 3;
+                    let aggro_val_str = if settings.gate_enabled {
+                        format!("[{:.0}%]", settings.gate_aggressiveness)
+                    } else {
+                        format!("[{:.0}% (Bypassed: 0%)]", settings.gate_aggressiveness)
+                    };
                     lines.push(Line::from(vec![
                         Span::styled(if sel_3 { " ▶ Aggressiveness           " } else { "   Aggressiveness           " }, if sel_3 { Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD) } else { Style::default().fg(Color::White) }),
-                        Span::styled(format!("[{:.0}%]", settings.gate_aggressiveness), Style::default().fg(Color::White)),
+                        Span::styled(aggro_val_str, if settings.gate_enabled { Style::default().fg(Color::White) } else { Style::default().fg(Color::DarkGray) }),
                     ]));
                     // Silence Attenuation
                     let sel_4 = selected_noise_idx == 4;
+                    let atten_val_str = if settings.gate_enabled {
+                        format!("[{:.0} dB]", settings.silence_attenuation)
+                    } else {
+                        format!("[{:.0} dB (Bypassed: 0 dB)]", settings.silence_attenuation)
+                    };
                     lines.push(Line::from(vec![
                         Span::styled(if sel_4 { " ▶ Silence Attenuation      " } else { "   Silence Attenuation      " }, if sel_4 { Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD) } else { Style::default().fg(Color::White) }),
-                        Span::styled(format!("[{:.0} dB]", settings.silence_attenuation), Style::default().fg(Color::White)),
+                        Span::styled(atten_val_str, if settings.gate_enabled { Style::default().fg(Color::White) } else { Style::default().fg(Color::DarkGray) }),
                     ]));
                     // Hangover
                     let sel_5 = selected_noise_idx == 5;
+                    let hangover_val_str = if settings.gate_enabled {
+                        format!("[{} ms]", settings.hangover_ms)
+                    } else {
+                        format!("[{} ms (Bypassed)]", settings.hangover_ms)
+                    };
                     lines.push(Line::from(vec![
                         Span::styled(if sel_5 { " ▶ Gate Hangover            " } else { "   Gate Hangover            " }, if sel_5 { Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD) } else { Style::default().fg(Color::White) }),
-                        Span::styled(format!("[{} ms]", settings.hangover_ms), Style::default().fg(Color::White)),
+                        Span::styled(hangover_val_str, if settings.gate_enabled { Style::default().fg(Color::White) } else { Style::default().fg(Color::DarkGray) }),
                     ]));
                     lines.push(Line::from(""));
 
@@ -400,6 +420,20 @@ fn tui_loop(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
             }
 
             // Right Panel: Clean Meters & Signal Telemetry
+            let noise_filter_status = if settings.rnnoise_enabled {
+                Span::styled(format!("RNNoise ({:.0}% Blend)", settings.denoise_blend), Style::default().fg(Color::White))
+            } else {
+                Span::styled("BYPASS (Raw Passthrough)", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD))
+            };
+
+            let noise_gate_status = if settings.gate_enabled {
+                Span::styled(format!("Speech Gate ({:.0}% Aggro)", settings.gate_aggressiveness), Style::default().fg(Color::White))
+            } else {
+                Span::styled("BYPASS (Gate Open)", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD))
+            };
+
+            let gain_str = format!("{:+.1} dB Output Gain", settings.output_gain_db);
+
             if settings.telemetry_enabled {
                 let clipping = peak_lvl >= 0.99;
                 let tele_lines = vec![
@@ -428,7 +462,15 @@ fn tui_loop(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
                     Line::from(Span::styled("SIGNAL PIPELINE", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))),
                     Line::from(vec![
                         Span::styled("  Source Node   : ", Style::default().fg(Color::DarkGray)),
-                        Span::styled("ghelper-audio", Style::default().fg(Color::Green)),
+                        Span::styled("ghelper-audio (Clean Mic)", Style::default().fg(Color::Green)),
+                    ]),
+                    Line::from(vec![
+                        Span::styled("  Noise Filter  : ", Style::default().fg(Color::DarkGray)),
+                        noise_filter_status,
+                    ]),
+                    Line::from(vec![
+                        Span::styled("  Noise Gate    : ", Style::default().fg(Color::DarkGray)),
+                        noise_gate_status,
                     ]),
                     Line::from(vec![
                         Span::styled("  Pre-HPF       : ", Style::default().fg(Color::DarkGray)),
@@ -440,7 +482,7 @@ fn tui_loop(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
                     ]),
                     Line::from(vec![
                         Span::styled("  Compressor    : ", Style::default().fg(Color::DarkGray)),
-                        Span::styled("3:1 Vocal Leveling", Style::default().fg(Color::White)),
+                        Span::styled(format!("3:1 Leveling ({})", gain_str), Style::default().fg(Color::White)),
                     ]),
                     Line::from(vec![
                         Span::styled("  True Limiter  : ", Style::default().fg(Color::DarkGray)),
@@ -465,11 +507,11 @@ fn tui_loop(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
                     ]),
                     Line::from(vec![
                         Span::styled("  Noise Filter  : ", Style::default().fg(Color::DarkGray)),
-                        Span::styled("RNNoise Neural Suppressor", Style::default().fg(Color::White)),
+                        noise_filter_status,
                     ]),
                     Line::from(vec![
                         Span::styled("  Noise Gate    : ", Style::default().fg(Color::DarkGray)),
-                        Span::styled("VAD-driven Speech Gate", Style::default().fg(Color::White)),
+                        noise_gate_status,
                     ]),
                     Line::from(vec![
                         Span::styled("  Pre-HPF       : ", Style::default().fg(Color::DarkGray)),
@@ -481,7 +523,7 @@ fn tui_loop(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
                     ]),
                     Line::from(vec![
                         Span::styled("  Compressor    : ", Style::default().fg(Color::DarkGray)),
-                        Span::styled("3:1 Vocal Leveling", Style::default().fg(Color::White)),
+                        Span::styled(format!("3:1 Leveling ({})", gain_str), Style::default().fg(Color::White)),
                     ]),
                     Line::from(vec![
                         Span::styled("  True Limiter  : ", Style::default().fg(Color::DarkGray)),
