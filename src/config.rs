@@ -148,13 +148,24 @@ impl CleanMicSettings {
     }
 
     pub fn sync_hear_voice(enable: bool) {
-        // Disconnect all existing monitor links from ghelper-audio
-        let cleanup_cmd = "pw-link -l 2>/dev/null | grep -E 'ghelper-audio:capture_MONO' -A 2 | grep -E 'playback_' | awk '{print $2}' | while read -r dst; do pw-link -d ghelper-audio:capture_MONO \"$dst\" 2>/dev/null; done";
-        let _ = Command::new("sh").arg("-c").arg(cleanup_cmd).output();
+        Self::sync_hear_voice_with_source(enable, is_voice_fx_active());
+    }
+
+    pub fn sync_hear_voice_with_source(enable: bool, fx_active: bool) {
+        // Disconnect any existing monitor links from both sources
+        disconnect_monitor_links("ghelper-audio:capture_MONO");
+        disconnect_monitor_links("ghelper-audio-fx:capture_MONO");
 
         if !enable {
             return;
         }
+
+        // Determine active monitor source: if FX is active, monitor the FX mic, otherwise clean mic
+        let monitor_source = if fx_active {
+            "ghelper-audio-fx:capture_MONO"
+        } else {
+            "ghelper-audio:capture_MONO"
+        };
 
         // Query active default sink
         let sink_out = Command::new("pactl").arg("get-default-sink").output();
@@ -167,8 +178,45 @@ impl CleanMicSettings {
         if !default_sink.is_empty() {
             let left_port = format!("{}:playback_FL", default_sink);
             let right_port = format!("{}:playback_FR", default_sink);
-            let _ = Command::new("pw-link").args(["ghelper-audio:capture_MONO", &left_port]).output();
-            let _ = Command::new("pw-link").args(["ghelper-audio:capture_MONO", &right_port]).output();
+            let _ = Command::new("pw-link").args([monitor_source, &left_port]).output();
+            let _ = Command::new("pw-link").args([monitor_source, &right_port]).output();
+        }
+    }
+}
+
+pub fn is_voice_fx_active() -> bool {
+    let output = Command::new("wpctl").args(["inspect", "@DEFAULT_AUDIO_SOURCE@"]).output();
+    if let Ok(out) = output {
+        let text = String::from_utf8_lossy(&out.stdout);
+        return text.contains("ghelper-audio-fx");
+    }
+    false
+}
+
+fn disconnect_monitor_links(source_port: &str) {
+    if let Ok(out) = Command::new("pw-link").args(["-I", "-l"]).output() {
+        let text = String::from_utf8_lossy(&out.stdout);
+        let mut cur_port = String::new();
+        for line in text.lines() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() { continue; }
+            if line.starts_with(' ') && line.contains("|->") {
+                if cur_port == source_port {
+                    if let Some(target) = line.split("|->").nth(1) {
+                        let target_clean = target.trim();
+                        // Only disconnect if target is a playback sink (e.g. bluez, alsa playback)
+                        if target_clean.contains("playback_") {
+                            let _ = Command::new("pw-link").args(["-d", source_port, target_clean]).output();
+                        }
+                    }
+                }
+            } else {
+                // Header line: port name
+                let parts: Vec<&str> = trimmed.split_whitespace().collect();
+                if parts.len() >= 2 {
+                    cur_port = parts[1].to_string();
+                }
+            }
         }
     }
 }

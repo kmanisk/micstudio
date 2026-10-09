@@ -395,6 +395,15 @@ pub fn set_clean_internal(verbose: bool) -> Result<String> {
             println!("Switched default source to Native Clean Mic (ghelper-audio) [Node ID: {}]", id);
             println!("Voice FX engine stopped (Zero idle resources).");
         }
+
+        // Clean up any stale recording links from voice FX mic (ghelper-audio-fx)
+        disconnect_recording_links_from("ghelper-audio-fx:capture_MONO");
+
+        // Sync hear voice monitor back to clean mic if active
+        let cfg = CleanMicSettings::load();
+        if cfg.hear_voice {
+            CleanMicSettings::sync_hear_voice_with_source(true, false);
+        }
     } else if verbose {
         eprintln!("Warning: ghelper-audio node not found in PipeWire graph.");
     }
@@ -463,8 +472,44 @@ pub fn apply_voice_internal(preset_name: &str, verbose: bool) -> Result<String> 
         if verbose {
             println!("Default Source set to Voice FX (ghelper-audio-fx) [Node ID: {}]", id);
         }
+
+        // Clean up any stale recording links from clean mic (ghelper-audio) so apps don't get double input
+        disconnect_recording_links_from("ghelper-audio:capture_MONO");
+
+        // Sync hear voice monitor if enabled so sidetone monitors the FX source
+        let cfg = CleanMicSettings::load();
+        if cfg.hear_voice {
+            CleanMicSettings::sync_hear_voice_with_source(true, true);
+        }
     }
     Ok(status_msg)
+}
+
+fn disconnect_recording_links_from(source_port: &str) {
+    if let Ok(out) = Command::new("pw-link").args(["-I", "-l"]).output() {
+        let text = String::from_utf8_lossy(&out.stdout);
+        let mut cur_port = String::new();
+        for line in text.lines() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() { continue; }
+            if line.starts_with(' ') && line.contains("|->") {
+                if cur_port == source_port {
+                    if let Some(target) = line.split("|->").nth(1) {
+                        let target_clean = target.trim();
+                        // Disconnect if target is an app capture port (e.g. input_MONO, input_FL)
+                        if target_clean.contains("input_") {
+                            let _ = Command::new("pw-link").args(["-d", source_port, target_clean]).output();
+                        }
+                    }
+                }
+            } else {
+                let parts: Vec<&str> = trimmed.split_whitespace().collect();
+                if parts.len() >= 2 {
+                    cur_port = parts[1].to_string();
+                }
+            }
+        }
+    }
 }
 
 pub fn apply_voice(preset_name: &str) -> Result<()> {
