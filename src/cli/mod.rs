@@ -420,6 +420,10 @@ pub fn set_clean_silent() -> Result<String> {
 }
 
 pub fn apply_voice_internal(preset_name: &str, verbose: bool) -> Result<String> {
+    if preset_name.eq_ignore_ascii_case("Natural Clean") || preset_name.eq_ignore_ascii_case("clean") || preset_name.eq_ignore_ascii_case("off") {
+        return set_clean_internal(verbose);
+    }
+
     let mut mgr = PresetManager::new()?;
     let preset = mgr.find_preset(preset_name)
         .with_context(|| format!("Preset '{}' not found. Run 'micstudio list' to view available presets.", preset_name))?;
