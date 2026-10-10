@@ -884,9 +884,9 @@ fn tui_loop(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
                                     settings.rnnoise_enabled = true;
                                     settings.denoise_blend = 100.0;
                                     settings.gate_enabled = true;
-                                    settings.gate_aggressiveness = 85.0;
+                                    settings.gate_aggressiveness = 56.0;
                                     settings.silence_attenuation = -36.0;
-                                    settings.hangover_ms = 180;
+                                    settings.hangover_ms = 300;
                                     settings.output_gain_db = 2.0;
                                     let _ = settings.apply_dsp_params();
                                     let _ = settings.save();
