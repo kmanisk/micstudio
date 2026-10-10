@@ -112,11 +112,11 @@ impl Vocoder {
             vocoded += c_band * self.envelopes[i];
         }
 
-        // Makeup gain for vocoder output
-        vocoded *= 3.5;
+        // Normalize and scale vocoder speech
+        vocoded *= 6.0;
 
-        // 3. Matrix Ring Modulation (35 Hz carrier with tanh saturation)
-        if self.ring_intensity > 0.01 {
+        // 3. Matrix Ring Modulation (35 Hz carrier with smooth saturation)
+        let ring_out = if self.ring_intensity > 0.01 {
             let ring_step = 35.0 / self.sample_rate;
             let ring_carrier = (2.0 * std::f32::consts::PI * self.ring_phase).sin();
             self.ring_phase += ring_step;
@@ -124,12 +124,18 @@ impl Vocoder {
                 self.ring_phase -= 1.0;
             }
 
-            let ring_mod_signal = (voice_input * (1.0 - self.ring_intensity * 0.5) + (voice_input * ring_carrier) * self.ring_intensity * 1.5).tanh();
-            vocoded = (1.0 - self.ring_intensity) * vocoded + self.ring_intensity * ring_mod_signal;
-        }
+            (voice_input * (1.0 - self.ring_intensity * 0.4) + (voice_input * ring_carrier) * self.ring_intensity * 1.2).tanh()
+        } else {
+            voice_input
+        };
 
-        // Dry/Wet blend
-        (1.0 - self.mix) * voice_input + self.mix * vocoded
+        // Combine base vocoder or dry signal with ring modulator
+        let base_signal = (1.0 - self.mix) * voice_input + self.mix * vocoded;
+        if self.ring_intensity > 0.01 {
+            (1.0 - self.ring_intensity) * base_signal + self.ring_intensity * ring_out
+        } else {
+            base_signal
+        }
     }
 
     pub fn reset(&mut self) {

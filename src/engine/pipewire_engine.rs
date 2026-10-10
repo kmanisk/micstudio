@@ -162,7 +162,7 @@ pub fn run_engine(initial_preset: Preset, stop_signal: Arc<AtomicBool>) -> Resul
         *pw::keys::NODE_DESCRIPTION => "MicStudio Microphone Capture",
         *pw::keys::AUDIO_CHANNELS => "1",
         "audio.rate" => "48000",
-        "target.object" => "alsa_input.pci-0000_00_1f.3.analog-stereo",
+        "target.object" => "ghelper-audio",
     };
 
     let capture_stream = pw::stream::StreamBox::new(&core, "micstudio-capture", capture_props)
