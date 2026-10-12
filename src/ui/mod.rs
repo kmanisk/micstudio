@@ -11,10 +11,10 @@ use anyhow::Result;
 use crossterm::{
     event::{self, Event, KeyCode, KeyModifiers},
     execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
-use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
+use ratatui::backend::CrosstermBackend;
 use std::io::stdout;
 use std::time::Duration;
 
@@ -155,6 +155,12 @@ fn run_event_loop_with_state(
                     (KeyCode::Char('p'), _) => {
                         state.trigger_audition();
                     }
+                    (KeyCode::Char('r'), _) => {
+                        let _ = state.reset_selected_preset();
+                    }
+                    (KeyCode::Char('w'), _) => {
+                        let _ = state.save_current_tweaks();
+                    }
                     (KeyCode::Char(c), _) if c.is_ascii_digit() && c != '0' => {
                         let num = (c as u8 - b'0') as usize;
                         state.jump_to_preset(num);
@@ -167,26 +173,46 @@ fn run_event_loop_with_state(
                     }
                     (KeyCode::Char('h'), _) | (KeyCode::Left, _) => {
                         let _ = state.adjust_selected_control(-1);
-                        monitor.set_enabled(state.meter_enabled || state.spectrograph_enabled || state.sidetone_enabled);
+                        monitor.set_enabled(
+                            state.meter_enabled
+                                || state.spectrograph_enabled
+                                || state.sidetone_enabled,
+                        );
                     }
                     (KeyCode::Char('l'), _) | (KeyCode::Right, _) => {
                         let _ = state.adjust_selected_control(1);
-                        monitor.set_enabled(state.meter_enabled || state.spectrograph_enabled || state.sidetone_enabled);
+                        monitor.set_enabled(
+                            state.meter_enabled
+                                || state.spectrograph_enabled
+                                || state.sidetone_enabled,
+                        );
                     }
                     (KeyCode::Char('s'), _) => {
                         state.toggle_spectrograph_fullscreen();
-                        monitor.set_enabled(state.meter_enabled || state.spectrograph_enabled || state.sidetone_enabled);
+                        monitor.set_enabled(
+                            state.meter_enabled
+                                || state.spectrograph_enabled
+                                || state.sidetone_enabled,
+                        );
                     }
                     (KeyCode::Char('m'), _) => {
                         state.toggle_spectrograph_mode();
                     }
                     (KeyCode::Char('v'), _) => {
                         let _ = state.toggle_sidetone();
-                        monitor.set_enabled(state.meter_enabled || state.spectrograph_enabled || state.sidetone_enabled);
+                        monitor.set_enabled(
+                            state.meter_enabled
+                                || state.spectrograph_enabled
+                                || state.sidetone_enabled,
+                        );
                     }
                     (KeyCode::Char('t'), _) => {
                         state.toggle_meter();
-                        monitor.set_enabled(state.meter_enabled || state.spectrograph_enabled || state.sidetone_enabled);
+                        monitor.set_enabled(
+                            state.meter_enabled
+                                || state.spectrograph_enabled
+                                || state.sidetone_enabled,
+                        );
                     }
                     (KeyCode::Char('?'), _) => {
                         state.toggle_help();

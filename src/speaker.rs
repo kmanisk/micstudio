@@ -111,9 +111,7 @@ impl SpeakerDsp {
     }
 
     fn query_route(enabled: bool, voicing: SpeakerVoicing) -> String {
-        let output = Command::new("pactl")
-            .arg("get-default-sink")
-            .output();
+        let output = Command::new("pactl").arg("get-default-sink").output();
         let default_sink = if let Ok(out) = output {
             String::from_utf8_lossy(&out.stdout).trim().to_string()
         } else {

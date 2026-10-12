@@ -2,7 +2,9 @@
 
 use crate::dsp::biquad::{Biquad, FilterType};
 
-pub const EQ_FREQS: [f32; 9] = [80.0, 120.0, 250.0, 400.0, 1500.0, 3500.0, 6000.0, 9000.0, 12000.0];
+pub const EQ_FREQS: [f32; 9] = [
+    80.0, 120.0, 250.0, 400.0, 1500.0, 3500.0, 6000.0, 9000.0, 12000.0,
+];
 pub const EQ_QS: [f32; 9] = [0.707, 0.707, 1.0, 1.0, 1.0, 0.707, 1.0, 0.707, 1.0];
 
 #[derive(Debug, Clone)]
@@ -53,7 +55,13 @@ impl ParametricEq {
             } else {
                 FilterType::Peaking
             };
-            b.configure(filter_type, EQ_FREQS[i], EQ_QS[i], self.gains[i], self.sample_rate);
+            b.configure(
+                filter_type,
+                EQ_FREQS[i],
+                EQ_QS[i],
+                self.gains[i],
+                self.sample_rate,
+            );
         }
     }
 

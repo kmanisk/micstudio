@@ -2,8 +2,8 @@
 
 use micstudio::ui::app::AppState;
 use micstudio::ui::render::{fit_string, render_ui};
-use ratatui::backend::TestBackend;
 use ratatui::Terminal;
+use ratatui::backend::TestBackend;
 
 #[test]
 fn test_fit_string_utf8_truncation() {
@@ -42,14 +42,35 @@ fn test_render_80x24_minimal_resolution() {
     }
 
     assert!(full_rendered.contains("MICSTUDIO"), "Top bar title missing");
-    assert!(full_rendered.contains("State: Clean"), "Clean state indicator missing");
+    assert!(
+        full_rendered.contains("State: Clean"),
+        "Clean state indicator missing"
+    );
     assert!(full_rendered.contains("Presets"), "Presets panel missing");
-    assert!(full_rendered.contains("Natural Clean"), "Natural Clean preset missing");
-    assert!(full_rendered.contains("Live Controls"), "Live Controls panel missing");
-    assert!(full_rendered.contains("DPDFNet Suppression"), "DPDFNet live control missing");
-    assert!(full_rendered.contains("Output Gain"), "Output Gain live control missing");
-    assert!(full_rendered.contains("Effect Wet Mix"), "Effect Wet Mix live control missing");
-    assert!(full_rendered.contains("Sidetone (Hear Mic)"), "Sidetone live control missing");
+    assert!(
+        full_rendered.contains("Natural Clean"),
+        "Natural Clean preset missing"
+    );
+    assert!(
+        full_rendered.contains("Live Controls"),
+        "Live Controls panel missing"
+    );
+    assert!(
+        full_rendered.contains("DPDFNet Suppression"),
+        "DPDFNet live control missing"
+    );
+    assert!(
+        full_rendered.contains("Output Gain"),
+        "Output Gain live control missing"
+    );
+    assert!(
+        full_rendered.contains("Effect Wet Mix"),
+        "Effect Wet Mix live control missing"
+    );
+    assert!(
+        full_rendered.contains("Sidetone (Hear Mic)"),
+        "Sidetone live control missing"
+    );
     assert!(full_rendered.contains("j/k"), "Footer hotkeys missing");
     assert!(full_rendered.contains("Space"), "Space hotkey missing");
 }
@@ -143,8 +164,7 @@ fn test_search_filtering_and_navigation() {
     for &idx in &filtered {
         let p = &state.presets[idx];
         assert!(
-            p.name.to_lowercase().contains("robot")
-                || p.category.to_lowercase().contains("robot"),
+            p.name.to_lowercase().contains("robot") || p.category.to_lowercase().contains("robot"),
             "Preset '{}' in '{}' did not match search query 'robot'",
             p.name,
             p.category
@@ -279,4 +299,51 @@ fn test_spectrograph_rendering_and_modes() {
     // 3. Fullscreen Spectrograph
     state.spectrograph_fullscreen = true;
     assert!(terminal.draw(|f| render_ui(f, &state)).is_ok());
+}
+
+#[test]
+fn test_tui_pipeline_graph_and_preset_details() {
+    let backend = TestBackend::new(100, 30);
+    let mut terminal = Terminal::new(backend).unwrap();
+    let mut state = AppState::new().unwrap();
+    state.active_preset_name = "Deep Voice".to_string();
+    if let Some(pos) = state.presets.iter().position(|p| p.name == "Deep Voice") {
+        state.cursor = pos;
+    }
+
+    assert!(terminal.draw(|f| render_ui(f, &state)).is_ok());
+
+    let buffer = terminal.backend().buffer();
+    let mut content = String::new();
+    for y in 0..30 {
+        for x in 0..100 {
+            content.push_str(buffer.cell((x, y)).unwrap().symbol());
+        }
+        content.push('\n');
+    }
+
+    assert!(
+        content.contains("Pipeline"),
+        "Pipeline graph missing in details pane"
+    );
+    assert!(
+        content.contains("Parameters"),
+        "Parameters breakdown missing"
+    );
+    assert!(
+        content.contains("CURRENTLY ACTIVE"),
+        "Active badge missing for active preset"
+    );
+    assert!(
+        content.contains("ghelper-audio-fx"),
+        "Routing source node missing"
+    );
+    assert!(
+        content.contains("reset"),
+        "Reset shortcut missing from bottom bar"
+    );
+    assert!(
+        content.contains("save"),
+        "Save shortcut missing from bottom bar"
+    );
 }

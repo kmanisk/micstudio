@@ -5,28 +5,28 @@ use crate::dsp::biquad::{Biquad, FilterType};
 
 pub const NUM_VOCODER_BANDS: usize = 16;
 pub const VOCODER_FREQS: [f32; NUM_VOCODER_BANDS] = [
-    150.0, 220.0, 320.0, 440.0, 600.0, 800.0, 1050.0, 1350.0,
-    1750.0, 2250.0, 2900.0, 3700.0, 4700.0, 5900.0, 7400.0, 9200.0,
+    150.0, 220.0, 320.0, 440.0, 600.0, 800.0, 1050.0, 1350.0, 1750.0, 2250.0, 2900.0, 3700.0,
+    4700.0, 5900.0, 7400.0, 9200.0,
 ];
 
 pub struct Vocoder {
     voice_filters: [Biquad; NUM_VOCODER_BANDS],
     carrier_filters: [Biquad; NUM_VOCODER_BANDS],
     envelopes: [f32; NUM_VOCODER_BANDS],
-    
+
     // Internal dual detuned sawtooth carrier oscillators
     carrier_phase1: f32,
     carrier_phase2: f32,
     carrier_freq: f32,
     detune: f32, // Hz
-    
+
     // Noise generator state for unvoiced consonant articulation
     noise_seed: u32,
 
     // Matrix ring-mod oscillator (35 - 55 Hz)
     ring_phase: f32,
     ring_intensity: f32, // 0.0 to 1.0
-    
+
     // Envelope follower time constants
     att_coeff: f32,
     rel_coeff: f32,
@@ -43,8 +43,20 @@ impl Vocoder {
         let mut cf = [Biquad::new(); NUM_VOCODER_BANDS];
 
         for i in 0..NUM_VOCODER_BANDS {
-            vf[i].configure(FilterType::BandPass, VOCODER_FREQS[i], 3.5, 0.0, sample_rate);
-            cf[i].configure(FilterType::BandPass, VOCODER_FREQS[i], 3.5, 0.0, sample_rate);
+            vf[i].configure(
+                FilterType::BandPass,
+                VOCODER_FREQS[i],
+                3.5,
+                0.0,
+                sample_rate,
+            );
+            cf[i].configure(
+                FilterType::BandPass,
+                VOCODER_FREQS[i],
+                3.5,
+                0.0,
+                sample_rate,
+            );
         }
 
         // Syllabic envelope: 6 ms attack, 25 ms release
@@ -88,7 +100,10 @@ impl Vocoder {
 
     #[inline(always)]
     fn next_noise(&mut self) -> f32 {
-        self.noise_seed = self.noise_seed.wrapping_mul(1664525).wrapping_add(1013904223);
+        self.noise_seed = self
+            .noise_seed
+            .wrapping_mul(1664525)
+            .wrapping_add(1013904223);
         ((self.noise_seed >> 9) as f32) / 8388608.0 - 1.0
     }
 

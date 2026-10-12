@@ -11,14 +11,14 @@ pub const DRY_DELAY_LEN: usize = 2 * RNN_FRAME_SIZE; // 960 samples = 20ms align
 pub struct NeuralDenoise {
     denoiser: Box<DenoiseState<'static>>,
     hpf_70: Biquad,
-    
+
     // Frame buffers
     in_buffer: [f32; RNN_FRAME_SIZE],
     out_buffer: [f32; RNN_FRAME_SIZE],
     in_idx: usize,
     out_idx: usize,
     out_avail: usize,
-    
+
     // Phase-aligned dry delay buffer (960 samples to match 2-frame RNNoise latency)
     dry_delay: [f32; DRY_DELAY_LEN],
     dry_delay_idx: usize,
@@ -28,12 +28,12 @@ pub struct NeuralDenoise {
     hangover_samples: usize,
     hangover_max: usize,
     gate_gain: f32,
-    
+
     // Controls
     enabled: bool,
     hpf_enabled: bool,
     gate_enabled: bool,
-    denoise_blend: f32, // 0.0 (full dry) to 1.0 (full wet RNNoise)
+    denoise_blend: f32,  // 0.0 (full dry) to 1.0 (full wet RNNoise)
     aggressiveness: f32, // 0.0 to 1.0
     vad_probability: f32,
     sample_rate: f32,
@@ -150,7 +150,7 @@ impl NeuralDenoise {
 
     fn process_frame(&mut self) {
         let mut frame_out = [0.0f32; RNN_FRAME_SIZE];
-        
+
         // RNNoise expects float scaled to approx 16-bit range (-32768 to 32768)
         let mut scaled_in = [0.0f32; RNN_FRAME_SIZE];
         for (i, &s) in self.in_buffer.iter().enumerate() {
@@ -177,7 +177,8 @@ impl NeuralDenoise {
             self.hangover_samples = self.hangover_samples.saturating_sub(RNN_FRAME_SIZE);
         }
 
-        let is_speech = !self.gate_enabled || self.vad_ema >= close_threshold || self.hangover_samples > 0;
+        let is_speech =
+            !self.gate_enabled || self.vad_ema >= close_threshold || self.hangover_samples > 0;
         let target_gain = if is_speech {
             1.0
         } else {

@@ -4,10 +4,10 @@
 
 use crate::dsp::pipeline::{AudioTelemetry, DspPipeline};
 use crate::engine::ring_buffer::SpscRingBuffer;
-use crate::ipc::{socket_path, IpcRequest, IpcResponse};
+use crate::ipc::{IpcRequest, IpcResponse, socket_path};
 use crate::presets::Preset;
 use anyhow::{Context, Result};
-use crossbeam_channel::{bounded, Receiver, Sender};
+use crossbeam_channel::{Receiver, Sender, bounded};
 use libspa::pod::Pod;
 use libspa::sys as spa_sys;
 use pipewire as pw;
@@ -15,8 +15,8 @@ use pw::properties::properties;
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixListener;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 
 pub const SAMPLE_RATE: u32 = 48000;
@@ -29,11 +29,12 @@ pub struct EngineHandles {
 pub fn run_engine(initial_preset: Preset, stop_signal: Arc<AtomicBool>) -> Result<()> {
     pw::init();
 
-    let mainloop = pw::main_loop::MainLoopRc::new(None)
-        .context("Failed to create PipeWire mainloop")?;
+    let mainloop =
+        pw::main_loop::MainLoopRc::new(None).context("Failed to create PipeWire mainloop")?;
     let context = pw::context::ContextRc::new(&mainloop, None)
         .context("Failed to create PipeWire context")?;
-    let core = context.connect_rc(None)
+    let core = context
+        .connect_rc(None)
         .context("Failed to connect to PipeWire core")?;
 
     // Ring buffer capacity: 8192 samples (~170 ms safety headroom)
@@ -46,7 +47,8 @@ pub fn run_engine(initial_preset: Preset, stop_signal: Arc<AtomicBool>) -> Resul
 
     // IPC channels
     let (preset_tx, preset_rx): (Sender<Preset>, Receiver<Preset>) = bounded(16);
-    let (telemetry_tx, telemetry_rx): (Sender<AudioTelemetry>, Receiver<AudioTelemetry>) = bounded(16);
+    let (telemetry_tx, telemetry_rx): (Sender<AudioTelemetry>, Receiver<AudioTelemetry>) =
+        bounded(16);
 
     let active_preset_name = Arc::new(std::sync::RwLock::new(initial_preset.name.clone()));
     let active_name_ipc = active_preset_name.clone();
@@ -57,8 +59,12 @@ pub fn run_engine(initial_preset: Preset, stop_signal: Arc<AtomicBool>) -> Resul
     if let Some(parent) = sock_path.parent() {
         let _ = fs::create_dir_all(parent);
     }
-    let listener = UnixListener::bind(&sock_path)
-        .with_context(|| format!("Failed to bind UNIX domain socket at {}", sock_path.display()))?;
+    let listener = UnixListener::bind(&sock_path).with_context(|| {
+        format!(
+            "Failed to bind UNIX domain socket at {}",
+            sock_path.display()
+        )
+    })?;
 
     let stop_signal_ipc = stop_signal.clone();
     let (pw_sender, pw_receiver) = pipewire::channel::channel();
@@ -92,7 +98,10 @@ pub fn run_engine(initial_preset: Preset, stop_signal: Arc<AtomicBool>) -> Resul
                             while let Ok(t) = telemetry_rx.try_recv() {
                                 last_telemetry = t;
                             }
-                            let active_str = active_name_ipc.read().map(|l| l.clone()).unwrap_or_else(|_| "Unknown".to_string());
+                            let active_str = active_name_ipc
+                                .read()
+                                .map(|l| l.clone())
+                                .unwrap_or_else(|_| "Unknown".to_string());
                             IpcResponse::Status {
                                 active_preset: active_str,
                                 telemetry: last_telemetry,
@@ -214,7 +223,8 @@ pub fn run_engine(initial_preset: Preset, stop_signal: Arc<AtomicBool>) -> Resul
                             for i in 0..n_frames {
                                 let start = i * stride;
                                 let end = start + stride;
-                                let bytes: [u8; 4] = valid_slice[start..end].try_into().unwrap_or([0; 4]);
+                                let bytes: [u8; 4] =
+                                    valid_slice[start..end].try_into().unwrap_or([0; 4]);
                                 let in_sample = f32::from_ne_bytes(bytes);
 
                                 let out_sample = pipeline.process_sample(in_sample);
@@ -222,7 +232,8 @@ pub fn run_engine(initial_preset: Preset, stop_signal: Arc<AtomicBool>) -> Resul
                             }
 
                             telemetry_counter += n_frames;
-                            if telemetry_counter >= 2400 { // ~50ms
+                            if telemetry_counter >= 2400 {
+                                // ~50ms
                                 let _ = telemetry_tx.try_send(pipeline.get_telemetry());
                                 telemetry_counter = 0;
                             }
@@ -262,8 +273,7 @@ pub fn run_engine(initial_preset: Preset, stop_signal: Arc<AtomicBool>) -> Resul
     source_stream.connect(
         libspa::utils::Direction::Output,
         None,
-        pw::stream::StreamFlags::MAP_BUFFERS
-            | pw::stream::StreamFlags::RT_PROCESS,
+        pw::stream::StreamFlags::MAP_BUFFERS | pw::stream::StreamFlags::RT_PROCESS,
         &mut params_source,
     )?;
 

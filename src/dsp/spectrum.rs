@@ -69,7 +69,8 @@ impl SpectrumAnalyzer {
         let mut window = [0.0f32; FFT_SIZE];
         for i in 0..FFT_SIZE {
             // Hann window: 0.5 * (1 - cos(2*pi*i / (N-1)))
-            window[i] = 0.5 * (1.0 - (2.0 * std::f32::consts::PI * i as f32 / (FFT_SIZE - 1) as f32).cos());
+            window[i] =
+                0.5 * (1.0 - (2.0 * std::f32::consts::PI * i as f32 / (FFT_SIZE - 1) as f32).cos());
         }
 
         Self {
@@ -112,7 +113,11 @@ impl SpectrumAnalyzer {
         }
 
         let rms = (sum_sq / FFT_SIZE as f32).sqrt();
-        let rms_db = if rms > 1e-5 { 20.0 * rms.log10() } else { -96.0 };
+        let rms_db = if rms > 1e-5 {
+            20.0 * rms.log10()
+        } else {
+            -96.0
+        };
 
         // Perform in-place Radix-2 FFT
         fft_radix2(&mut re, &mut im);

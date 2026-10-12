@@ -26,11 +26,11 @@ pub struct CleanMicSettings {
     #[serde(default = "default_dpdfnet_attenuation")]
     pub dpdfnet_attenuation_db: f32, // 0.0 to 100.0 (dB)
     #[serde(default)]
-    pub output_gain_db: f32,          // -24.0 to +12.0 (dB)
+    pub output_gain_db: f32, // -24.0 to +12.0 (dB)
     #[serde(default)]
-    pub hear_voice: bool,             // Sidetone / live mic monitor
+    pub hear_voice: bool, // Sidetone / live mic monitor
     #[serde(default)]
-    pub meter_enabled: bool,          // Live level meter in TUI
+    pub meter_enabled: bool, // Live level meter in TUI
 
     // Legacy fields preserved for TOML compatibility
     #[serde(default)]
@@ -179,14 +179,20 @@ impl CleanMicSettings {
         if !default_sink.is_empty() {
             let left_port = format!("{}:playback_FL", default_sink);
             let right_port = format!("{}:playback_FR", default_sink);
-            let _ = Command::new("pw-link").args([monitor_source, &left_port]).output();
-            let _ = Command::new("pw-link").args([monitor_source, &right_port]).output();
+            let _ = Command::new("pw-link")
+                .args([monitor_source, &left_port])
+                .output();
+            let _ = Command::new("pw-link")
+                .args([monitor_source, &right_port])
+                .output();
         }
     }
 }
 
 pub fn is_voice_fx_active() -> bool {
-    let output = Command::new("wpctl").args(["inspect", "@DEFAULT_AUDIO_SOURCE@"]).output();
+    let output = Command::new("wpctl")
+        .args(["inspect", "@DEFAULT_AUDIO_SOURCE@"])
+        .output();
     if let Ok(out) = output {
         let text = String::from_utf8_lossy(&out.stdout);
         return text.contains("ghelper-audio-fx");
@@ -209,7 +215,9 @@ fn disconnect_monitor_links(source_port: &str) {
                         let target_clean = target.trim();
                         // Only disconnect if target is a playback sink (e.g. bluez, alsa playback)
                         if target_clean.contains("playback_") {
-                            let _ = Command::new("pw-link").args(["-d", source_port, target_clean]).output();
+                            let _ = Command::new("pw-link")
+                                .args(["-d", source_port, target_clean])
+                                .output();
                         }
                     }
                 }
@@ -229,10 +237,16 @@ pub fn get_node_id(node_name: &str) -> Result<Option<String>> {
         .arg("Node")
         .output()
         .context("Failed to run pw-dump")?;
-    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap_or(serde_json::Value::Null);
+    let json: serde_json::Value =
+        serde_json::from_slice(&output.stdout).unwrap_or(serde_json::Value::Null);
     if let Some(arr) = json.as_array() {
         for item in arr {
-            if let Some(name) = item.get("info").and_then(|i| i.get("props")).and_then(|p| p.get("node.name")).and_then(|n| n.as_str()) {
+            if let Some(name) = item
+                .get("info")
+                .and_then(|i| i.get("props"))
+                .and_then(|p| p.get("node.name"))
+                .and_then(|n| n.as_str())
+            {
                 if name == node_name {
                     if let Some(id) = item.get("id").and_then(|id| id.as_u64()) {
                         return Ok(Some(id.to_string()));

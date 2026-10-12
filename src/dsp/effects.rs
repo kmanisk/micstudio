@@ -25,10 +25,13 @@ impl BandpassEffect {
     pub fn set_params(&mut self, hpf_hz: f32, lpf_hz: f32, sample_rate: f32) {
         if hpf_hz > 20.0 && lpf_hz > hpf_hz {
             // 2nd-order HPF and LPF for authentic radio bandlimiting
-            self.hpf.configure(FilterType::HighPass, hpf_hz, 0.707, 0.0, sample_rate);
-            self.lpf.configure(FilterType::LowPass, lpf_hz, 0.707, 0.0, sample_rate);
+            self.hpf
+                .configure(FilterType::HighPass, hpf_hz, 0.707, 0.0, sample_rate);
+            self.lpf
+                .configure(FilterType::LowPass, lpf_hz, 0.707, 0.0, sample_rate);
             // Mid-range presence peak at 1.8 kHz for carbon-mic telephone bite
-            self.presence.configure(FilterType::Peaking, 1800.0, 1.2, 4.0, sample_rate);
+            self.presence
+                .configure(FilterType::Peaking, 1800.0, 1.2, 4.0, sample_rate);
             self.makeup_gain = 1.414; // +3 dB makeup for band-limited energy loss
             self.enabled = true;
         } else {
@@ -154,7 +157,11 @@ impl StutterGate {
             }
         }
 
-        let target_gain = if self.phase < self.duty_cycle { 1.0 } else { 0.0 };
+        let target_gain = if self.phase < self.duty_cycle {
+            1.0
+        } else {
+            0.0
+        };
         // 5ms anti-click exponential smoothing
         let smooth_coeff = 1.0 - (-1.0 / (0.005 * self.sample_rate)).exp();
         self.current_gain += smooth_coeff * (target_gain - self.current_gain);
@@ -217,9 +224,11 @@ impl Compressor {
 
         let abs_sample = sample.abs();
         if abs_sample > self.envelope {
-            self.envelope = self.attack_coeff * self.envelope + (1.0 - self.attack_coeff) * abs_sample;
+            self.envelope =
+                self.attack_coeff * self.envelope + (1.0 - self.attack_coeff) * abs_sample;
         } else {
-            self.envelope = self.release_coeff * self.envelope + (1.0 - self.release_coeff) * abs_sample;
+            self.envelope =
+                self.release_coeff * self.envelope + (1.0 - self.release_coeff) * abs_sample;
         }
 
         let mut gain = if self.envelope > self.threshold_linear {
@@ -232,7 +241,8 @@ impl Compressor {
 
         // Upward expansion for quiet speech above noise floor
         if self.envelope > self.boost_threshold && self.envelope < self.threshold_linear {
-            let boost_factor = (self.threshold_linear - self.envelope) / (self.threshold_linear - self.boost_threshold);
+            let boost_factor = (self.threshold_linear - self.envelope)
+                / (self.threshold_linear - self.boost_threshold);
             gain *= 1.0 + (self.boost_linear - 1.0) * boost_factor;
         }
 

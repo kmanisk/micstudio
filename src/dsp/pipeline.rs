@@ -32,11 +32,11 @@ pub struct DspPipeline {
     eq: ParametricEq,
     compressor: Compressor,
     limiter: Limiter,
-    
+
     // Bypass & diagnostic flags
     cleanup_enabled: bool,
     fx_enabled: bool,
-    
+
     // Telemetry accumulators
     in_sum_sq: f32,
     out_sum_sq: f32,
@@ -90,15 +90,22 @@ impl DspPipeline {
         self.pitch.reset();
 
         // Vocoder & Ring Mod
-        self.vocoder.set_params(p.vocoder_mix, p.vocoder_carrier_hz, p.vocoder_detune, p.matrix_ring_mod);
+        self.vocoder.set_params(
+            p.vocoder_mix,
+            p.vocoder_carrier_hz,
+            p.vocoder_detune,
+            p.matrix_ring_mod,
+        );
         self.vocoder.reset();
 
         // Bandpass (Walkie Talkie)
-        self.bandpass.set_params(p.bandpass_hpf, p.bandpass_lpf, self.sample_rate);
+        self.bandpass
+            .set_params(p.bandpass_hpf, p.bandpass_lpf, self.sample_rate);
         self.bandpass.reset();
 
         // Bitcrusher
-        self.bitcrusher.set_params(p.bitcrush_bits, p.bitcrush_downsample);
+        self.bitcrusher
+            .set_params(p.bitcrush_bits, p.bitcrush_downsample);
         self.bitcrusher.reset();
 
         // Stutter (Cyber Chopper)
@@ -187,8 +194,16 @@ impl DspPipeline {
             let in_rms = (self.in_sum_sq / self.telemetry_samples as f32).sqrt();
             let out_rms = (self.out_sum_sq / self.telemetry_samples as f32).sqrt();
 
-            self.latest_telemetry.input_rms_db = if in_rms > 1e-5 { 20.0 * in_rms.log10() } else { -96.0 };
-            self.latest_telemetry.output_rms_db = if out_rms > 1e-5 { 20.0 * out_rms.log10() } else { -96.0 };
+            self.latest_telemetry.input_rms_db = if in_rms > 1e-5 {
+                20.0 * in_rms.log10()
+            } else {
+                -96.0
+            };
+            self.latest_telemetry.output_rms_db = if out_rms > 1e-5 {
+                20.0 * out_rms.log10()
+            } else {
+                -96.0
+            };
             self.latest_telemetry.peak_level = self.peak_hold;
             self.latest_telemetry.vad_probability = self.denoise.vad_probability();
 

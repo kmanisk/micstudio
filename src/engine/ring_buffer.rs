@@ -100,4 +100,3 @@ impl SpscRingBuffer {
 // Safety: Single-Producer Single-Consumer guarantee across audio threads
 unsafe impl Send for SpscRingBuffer {}
 unsafe impl Sync for SpscRingBuffer {}
-

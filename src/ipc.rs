@@ -36,7 +36,7 @@ pub fn send_command(req: &IpcRequest) -> Result<IpcResponse> {
     let path = socket_path();
     let stream = UnixStream::connect(&path)
         .with_context(|| format!("Engine socket not found at {}", path.display()))?;
-    
+
     let mut writer = stream.try_clone()?;
     let data = serde_json::to_string(req)?;
     writer.write_all(data.as_bytes())?;

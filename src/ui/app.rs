@@ -1,6 +1,6 @@
 //! MicStudio Application State & Actions.
 
-use crate::config::{parse_dynamic_stages, CleanMicSettings};
+use crate::config::{CleanMicSettings, parse_dynamic_stages};
 use crate::dsp::spectrum::LiveSpectrumData;
 use crate::presets::{Preset, PresetManager};
 use anyhow::Result;
@@ -123,8 +123,7 @@ impl AppState {
                 .iter()
                 .enumerate()
                 .filter(|(_, p)| {
-                    p.name.to_lowercase().contains(&q)
-                        || p.category.to_lowercase().contains(&q)
+                    p.name.to_lowercase().contains(&q) || p.category.to_lowercase().contains(&q)
                 })
                 .map(|(i, _)| i)
                 .collect()
@@ -269,7 +268,11 @@ impl AppState {
         self.spectrograph_enabled = !self.spectrograph_enabled;
         self.set_status(format!(
             "Live Spectrograph: {}",
-            if self.spectrograph_enabled { "ON" } else { "OFF" }
+            if self.spectrograph_enabled {
+                "ON"
+            } else {
+                "OFF"
+            }
         ));
     }
 
@@ -277,7 +280,11 @@ impl AppState {
         self.spectrograph_fullscreen = !self.spectrograph_fullscreen;
         self.set_status(format!(
             "Spectrograph View: {}",
-            if self.spectrograph_fullscreen { "Fullscreen" } else { "Embedded" }
+            if self.spectrograph_fullscreen {
+                "Fullscreen"
+            } else {
+                "Embedded"
+            }
         ));
     }
 
@@ -307,7 +314,11 @@ impl AppState {
         }
         self.set_status(format!(
             "Sidetone: {}",
-            if self.sidetone_enabled { "ON (Live Spectrograph Active)" } else { "OFF" }
+            if self.sidetone_enabled {
+                "ON (Live Spectrograph Active)"
+            } else {
+                "OFF"
+            }
         ));
         Ok(())
     }
@@ -359,6 +370,35 @@ impl AppState {
         Ok(())
     }
 
+    pub fn reset_selected_preset(&mut self) -> Result<()> {
+        let name = self.selected_preset().name.clone();
+        let mut mgr = PresetManager::new()?;
+        if mgr.reset_preset(&name)? {
+            self.presets = mgr.all_presets().to_vec();
+            if self.active_preset_name.eq_ignore_ascii_case(&name) {
+                let _ = self.apply_selected();
+            }
+            self.set_status(format!("Reset '{}' to factory defaults.", name));
+        } else {
+            self.set_status(format!("Cannot reset '{}': not a factory preset.", name));
+        }
+        Ok(())
+    }
+
+    pub fn save_current_tweaks(&mut self) -> Result<()> {
+        let mut mgr = PresetManager::new()?;
+        let active_name = self.active_preset_name.clone();
+        if let Some(mut preset) = mgr.find_preset(&active_name) {
+            preset.dpdfnet_attenuation_db = self.dpdfnet_attenuation;
+            let wet_dry = 1.0 - (self.effect_mix_pct as f32 / 100.0);
+            preset.wet_dry_mix = wet_dry;
+            mgr.update_preset_parameters(&preset)?;
+            self.presets = mgr.all_presets().to_vec();
+            self.set_status(format!("Saved live parameters to '{}'.", active_name));
+        }
+        Ok(())
+    }
+
     pub fn trigger_audition(&mut self) {
         if self.audition_running.load(Ordering::SeqCst) {
             self.set_status("Audition already running...".to_string());
@@ -367,7 +407,9 @@ impl AppState {
 
         let is_running = self.audition_running.clone();
         let status_arc = self.audition_status.clone();
-        let active_is_clean = self.active_preset_name.eq_ignore_ascii_case("Natural Clean");
+        let active_is_clean = self
+            .active_preset_name
+            .eq_ignore_ascii_case("Natural Clean");
         let source_node = if active_is_clean {
             "ghelper-audio"
         } else {
@@ -419,16 +461,16 @@ impl AppState {
 
     pub fn active_status(&self) -> Option<String> {
         if let Ok(guard) = self.audition_status.lock() {
-            if let Some((msg, created)) = guard.as_ref() {
-                if created.elapsed().as_secs() < 4 {
-                    return Some(msg.clone());
-                }
-            }
-        }
-        if let Some((msg, created)) = &self.status_message {
-            if created.elapsed().as_secs() < 3 {
+            if let Some((msg, _)) = guard.as_ref().filter(|(_, c)| c.elapsed().as_secs() < 4) {
                 return Some(msg.clone());
             }
+        }
+        if let Some((msg, _)) = self
+            .status_message
+            .as_ref()
+            .filter(|(_, c)| c.elapsed().as_secs() < 3)
+        {
+            return Some(msg.clone());
         }
         None
     }

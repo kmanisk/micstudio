@@ -4,7 +4,7 @@ use micstudio::dsp::pipeline::DspPipeline;
 use micstudio::dsp::pitch::PitchShifter;
 use micstudio::dsp::vocoder::Vocoder;
 use micstudio::presets::PresetManager;
-use micstudio::renderer::{render_file, resample_to_48k, RenderOptions};
+use micstudio::renderer::{RenderOptions, render_file, resample_to_48k};
 use std::fs;
 
 fn generate_sine_wave(freq_hz: f32, duration_sec: f32, sample_rate: f32) -> Vec<f32> {
@@ -21,7 +21,9 @@ fn generate_sine_wave(freq_hz: f32, duration_sec: f32, sample_rate: f32) -> Vec<
 fn count_zero_crossings(samples: &[f32]) -> usize {
     let mut count = 0;
     for i in 1..samples.len() {
-        if (samples[i - 1] < 0.0 && samples[i] >= 0.0) || (samples[i - 1] > 0.0 && samples[i] <= 0.0) {
+        if (samples[i - 1] < 0.0 && samples[i] >= 0.0)
+            || (samples[i - 1] > 0.0 && samples[i] <= 0.0)
+        {
             count += 1;
         }
     }
@@ -29,7 +31,9 @@ fn count_zero_crossings(samples: &[f32]) -> usize {
 }
 
 fn compute_rms(samples: &[f32]) -> f32 {
-    if samples.is_empty() { return 0.0; }
+    if samples.is_empty() {
+        return 0.0;
+    }
     let sum_sq: f32 = samples.iter().map(|&s| s * s).sum();
     (sum_sq / samples.len() as f32).sqrt()
 }
@@ -38,15 +42,25 @@ fn compute_rms(samples: &[f32]) -> f32 {
 fn test_01_all_presets_exist_and_validate() {
     let mgr = PresetManager::new().expect("Failed to initialize PresetManager");
     let all = mgr.all_presets();
-    assert!(all.len() >= 20, "Expected at least 20 voice presets, found {}", all.len());
+    assert!(
+        all.len() >= 20,
+        "Expected at least 20 voice presets, found {}",
+        all.len()
+    );
 
     let expected_names = [
-        "Natural Clean", "Deep Voice", "Chipmunk", "Daft Punk",
-        "Walkie Talkie", "Robot"
+        "Natural Clean",
+        "Deep Voice",
+        "Chipmunk",
+        "Daft Punk",
+        "Walkie Talkie",
+        "Robot",
     ];
 
     for name in expected_names {
-        let preset = mgr.find_preset(name).unwrap_or_else(|| panic!("Preset '{}' missing", name));
+        let preset = mgr
+            .find_preset(name)
+            .unwrap_or_else(|| panic!("Preset '{}' missing", name));
         assert!(!preset.name.is_empty());
         assert!(!preset.description.is_empty());
         assert!(!preset.category.is_empty());
@@ -76,7 +90,8 @@ fn test_02_pitch_shifter_direction_and_zero_crossing() {
     assert!(
         down_crossings < in_sub_crossings,
         "Octave down must reduce zero-crossings (got {}, expected < {})",
-        down_crossings, in_sub_crossings
+        down_crossings,
+        in_sub_crossings
     );
 
     // Test Octave Up (+12 semitones)
@@ -90,7 +105,8 @@ fn test_02_pitch_shifter_direction_and_zero_crossing() {
     assert!(
         up_crossings > in_sub_crossings,
         "Octave up must increase zero-crossings (got {}, expected > {})",
-        up_crossings, in_sub_crossings
+        up_crossings,
+        in_sub_crossings
     );
 }
 
@@ -120,12 +136,14 @@ fn test_03_bandpass_filter_attenuates_out_of_band() {
     assert!(
         sub_rms < mid_rms * 0.25,
         "Bandpass failed to attenuate 100 Hz sub-bass (sub: {}, mid: {})",
-        sub_rms, mid_rms
+        sub_rms,
+        mid_rms
     );
     assert!(
         high_rms < mid_rms * 0.35,
         "Bandpass failed to attenuate 10 kHz highs (high: {}, mid: {})",
-        high_rms, mid_rms
+        high_rms,
+        mid_rms
     );
 }
 
@@ -139,14 +157,20 @@ fn test_04_vocoder_and_stutter_transformations() {
     stutter.set_params(8.0, 0.5);
     let st_out: Vec<f32> = input.iter().map(|&s| stutter.process(s)).collect();
     let min_val = st_out.iter().map(|s| s.abs()).fold(1.0f32, f32::min);
-    assert!(min_val < 0.05, "Stutter gate must produce near-zero troughs");
+    assert!(
+        min_val < 0.05,
+        "Stutter gate must produce near-zero troughs"
+    );
 
     // Test Vocoder
     let mut vocoder = Vocoder::new(sample_rate);
     vocoder.set_params(0.8, 110.0, 3.5, 0.0);
     let voc_out: Vec<f32> = input.iter().map(|&s| vocoder.process(s)).collect();
     let voc_rms = compute_rms(&voc_out[2048..]);
-    assert!(voc_rms > 0.01, "Vocoder output must be audible and non-silent");
+    assert!(
+        voc_rms > 0.01,
+        "Vocoder output must be audible and non-silent"
+    );
     assert!(!voc_rms.is_nan() && !voc_rms.is_infinite());
 }
 
@@ -182,9 +206,15 @@ fn test_06_dsp_pipeline_state_isolation() {
     let input = generate_sine_wave(440.0, 0.2, sample_rate);
 
     let mut pipe_clean = DspPipeline::new(sample_rate);
-    let clean_preset = PresetManager::new().unwrap().find_preset("Natural Clean").unwrap();
+    let clean_preset = PresetManager::new()
+        .unwrap()
+        .find_preset("Natural Clean")
+        .unwrap();
     pipe_clean.apply_preset(&clean_preset);
-    let out_clean1: Vec<f32> = input.iter().map(|&s| pipe_clean.process_sample(s)).collect();
+    let out_clean1: Vec<f32> = input
+        .iter()
+        .map(|&s| pipe_clean.process_sample(s))
+        .collect();
 
     // Now corrupt state with heavy Robot preset
     let robot = PresetManager::new().unwrap().find_preset("Robot").unwrap();
@@ -196,13 +226,21 @@ fn test_06_dsp_pipeline_state_isolation() {
     // Reset and reapply clean
     pipe_clean.reset();
     pipe_clean.apply_preset(&clean_preset);
-    let out_clean2: Vec<f32> = input.iter().map(|&s| pipe_clean.process_sample(s)).collect();
+    let out_clean2: Vec<f32> = input
+        .iter()
+        .map(|&s| pipe_clean.process_sample(s))
+        .collect();
 
     // Verify out_clean1 matches out_clean2 sample-for-sample
     assert_eq!(out_clean1.len(), out_clean2.len());
     for i in 0..out_clean1.len() {
         let diff = (out_clean1[i] - out_clean2[i]).abs();
-        assert!(diff < 1e-4, "State isolation failed at sample {}: diff = {}", i, diff);
+        assert!(
+            diff < 1e-4,
+            "State isolation failed at sample {}: diff = {}",
+            i,
+            diff
+        );
     }
 }
 
@@ -223,7 +261,9 @@ fn test_07_all_13_presets_produce_finite_audible_output() {
             assert!(!out.is_nan(), "Preset '{}' generated NaN", preset.name);
             assert!(!out.is_infinite(), "Preset '{}' generated Inf", preset.name);
             let abs_o = out.abs();
-            if abs_o > max_abs { max_abs = abs_o; }
+            if abs_o > max_abs {
+                max_abs = abs_o;
+            }
             sum_sq += out * out;
         }
 
@@ -231,12 +271,14 @@ fn test_07_all_13_presets_produce_finite_audible_output() {
         assert!(
             rms > 0.001,
             "Preset '{}' produced silence (RMS = {})",
-            preset.name, rms
+            preset.name,
+            rms
         );
         assert!(
             max_abs <= 1.01,
             "Preset '{}' exceeded limiter safety ceiling (Peak = {})",
-            preset.name, max_abs
+            preset.name,
+            max_abs
         );
     }
 }
@@ -279,7 +321,10 @@ fn test_09_offline_render_does_not_modify_source() {
 
     let initial_bytes = fs::read(&input_wav).unwrap();
 
-    let preset = PresetManager::new().unwrap().find_preset("Deep Voice").unwrap();
+    let preset = PresetManager::new()
+        .unwrap()
+        .find_preset("Deep Voice")
+        .unwrap();
     let options = RenderOptions {
         input_path: input_wav.clone(),
         output_path: output_wav.clone(),
@@ -316,7 +361,10 @@ fn test_10_clean_reference_has_zero_creative_fx() {
     assert_eq!(clean.bandpass_lpf, 0.0);
     assert_eq!(clean.bitcrush_bits, 24);
     assert_eq!(clean.bitcrush_downsample, 1);
-    assert!(clean.noise_suppression, "Natural Clean must retain noise suppression");
+    assert!(
+        clean.noise_suppression,
+        "Natural Clean must retain noise suppression"
+    );
 }
 
 #[test]
@@ -335,7 +383,7 @@ fn test_11_wav_stereo_to_mono_and_float_conversions() {
     {
         let mut writer = WavWriter::create(&stereo_wav, spec).unwrap();
         for _ in 0..1000 {
-            writer.write_sample(16384i16).unwrap();  // +0.5
+            writer.write_sample(16384i16).unwrap(); // +0.5
             writer.write_sample(-16384i16).unwrap(); // -0.5
         }
         writer.finalize().unwrap();
@@ -346,7 +394,11 @@ fn test_11_wav_stereo_to_mono_and_float_conversions() {
     assert_eq!(info.sample_rate, 44100);
     assert_eq!(mono_samples.len(), 1000);
     for &s in &mono_samples {
-        assert!(s.abs() < 1e-4, "Stereo cancellation downmix failed: got {}", s);
+        assert!(
+            s.abs() < 1e-4,
+            "Stereo cancellation downmix failed: got {}",
+            s
+        );
     }
 
     let _ = fs::remove_file(stereo_wav);
@@ -365,7 +417,10 @@ fn test_12_dc_offset_and_buffer_boundary_handling() {
     }
 
     let mut pipeline = DspPipeline::new(sample_rate);
-    let clean = PresetManager::new().unwrap().find_preset("Natural Clean").unwrap();
+    let clean = PresetManager::new()
+        .unwrap()
+        .find_preset("Natural Clean")
+        .unwrap();
     pipeline.apply_preset(&clean);
 
     let mut out_samples = Vec::new();
@@ -374,7 +429,8 @@ fn test_12_dc_offset_and_buffer_boundary_handling() {
     }
 
     // After 70 Hz HPF settles (> 1000 samples), DC offset should be stripped to near zero
-    let settled_dc: f32 = out_samples[1500..].iter().sum::<f32>() / out_samples[1500..].len() as f32;
+    let settled_dc: f32 =
+        out_samples[1500..].iter().sum::<f32>() / out_samples[1500..].len() as f32;
     assert!(
         settled_dc.abs() < 0.05,
         "70 Hz HPF failed to remove DC offset! Settled DC was {}",
@@ -382,3 +438,85 @@ fn test_12_dc_offset_and_buffer_boundary_handling() {
     );
 }
 
+#[test]
+fn test_13_dpdfnet_attenuation_capped_for_all_presets() {
+    let mgr = PresetManager::new().unwrap();
+    let presets = mgr.all_presets();
+
+    for p in presets {
+        assert!(
+            p.dpdfnet_attenuation_db <= 50.0,
+            "Preset '{}' attenuation {} dB exceeds safe threshold (max 50 dB to avoid consonant gating)",
+            p.name,
+            p.dpdfnet_attenuation_db
+        );
+        assert!(
+            p.dpdfnet_attenuation_db >= 40.0,
+            "Preset '{}' attenuation {} dB is below minimum suppression threshold (min 40 dB)",
+            p.name,
+            p.dpdfnet_attenuation_db
+        );
+    }
+}
+
+#[test]
+fn test_14_stage_pipeline_summary_and_limitations_notes() {
+    let mgr = PresetManager::new().unwrap();
+
+    // Natural Clean
+    let clean = mgr.find_preset("Natural Clean").unwrap();
+    let clean_pipeline = clean.stage_pipeline_summary();
+    assert_eq!(clean_pipeline.first().unwrap(), "DPDFNet (45dB)");
+    assert_eq!(clean_pipeline.last().unwrap(), "LSP Limiter (-3dBFS)");
+    assert!(
+        clean
+            .limitations_note()
+            .unwrap()
+            .contains("Reference broadcast baseline")
+    );
+
+    // Deep Voice
+    let deep = mgr.find_preset("Deep Voice").unwrap();
+    let deep_pipeline = deep.stage_pipeline_summary();
+    assert!(deep_pipeline.iter().any(|s| s.contains("Pitch")));
+    assert!(
+        deep.limitations_note()
+            .unwrap()
+            .contains("Formant preservation")
+    );
+
+    // Robot / Vocoder category
+    let robot = mgr.find_preset("Robot").unwrap();
+    let robot_pipeline = robot.stage_pipeline_summary();
+    assert!(
+        robot_pipeline
+            .iter()
+            .any(|s| s.contains("Modulation") || s.contains("Chopper"))
+    );
+    assert!(robot.limitations_note().unwrap().contains("self-carrier"));
+}
+
+#[test]
+fn test_15_preset_manager_reset_and_update_tweaks() {
+    let mut mgr = PresetManager::new().unwrap();
+    let original_deep = mgr.find_preset("Deep Voice").unwrap().clone();
+    assert_eq!(original_deep.dpdfnet_attenuation_db, 45.0);
+
+    // Modify parameters
+    let mut tweaked = original_deep.clone();
+    tweaked.dpdfnet_attenuation_db = 49.0;
+    tweaked.pitch_semitones = -4.0;
+    mgr.update_preset_parameters(&tweaked).unwrap();
+
+    let loaded_tweaked = mgr.find_preset("Deep Voice").unwrap();
+    assert_eq!(loaded_tweaked.dpdfnet_attenuation_db, 49.0);
+    assert_eq!(loaded_tweaked.pitch_semitones, -4.0);
+
+    // Reset to factory defaults
+    let reset_success = mgr.reset_preset("Deep Voice").unwrap();
+    assert!(reset_success);
+
+    let restored = mgr.find_preset("Deep Voice").unwrap();
+    assert_eq!(restored.dpdfnet_attenuation_db, 45.0);
+    assert_eq!(restored.pitch_semitones, original_deep.pitch_semitones);
+}

@@ -3,7 +3,7 @@
 //! with 4-point Hermite cubic interpolation and Hann crossfading.
 
 pub const PITCH_BUFFER_SIZE: usize = 16384; // ~341 ms at 48 kHz
-pub const GRAIN_SIZE: usize = 2048;         // ~42.7 ms at 48 kHz
+pub const GRAIN_SIZE: usize = 2048; // ~42.7 ms at 48 kHz
 
 pub struct PitchShifter {
     buffer: [f32; PITCH_BUFFER_SIZE],
@@ -19,7 +19,8 @@ impl PitchShifter {
     pub fn new() -> Self {
         let mut hann = [0.0; GRAIN_SIZE];
         for i in 0..GRAIN_SIZE {
-            hann[i] = 0.5 * (1.0 - (2.0 * std::f32::consts::PI * i as f32 / GRAIN_SIZE as f32).cos());
+            hann[i] =
+                0.5 * (1.0 - (2.0 * std::f32::consts::PI * i as f32 / GRAIN_SIZE as f32).cos());
         }
 
         Self {
@@ -92,7 +93,11 @@ impl PitchShifter {
 
         // Phase 1 and Phase 2 (Tap 2 is 180° out of phase)
         let p1 = self.phase1;
-        let p2 = if p1 + half_g >= g { p1 + half_g - g } else { p1 + half_g };
+        let p2 = if p1 + half_g >= g {
+            p1 + half_g - g
+        } else {
+            p1 + half_g
+        };
 
         let idx1 = (p1 as usize).min(GRAIN_SIZE - 1);
         let idx2 = (p2 as usize).min(GRAIN_SIZE - 1);

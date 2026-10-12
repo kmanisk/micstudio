@@ -2,8 +2,8 @@ use anyhow::{Context, Result};
 use libspa::sys as spa_sys;
 use pipewire as pw;
 use pw::properties::properties;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::thread;
 use std::time::Duration;
 
@@ -11,11 +11,12 @@ use std::time::Duration;
 fn test_pipewire_capture_stream() -> Result<()> {
     pw::init();
 
-    let mainloop = pw::main_loop::MainLoopRc::new(None)
-        .context("Failed to create PipeWire mainloop")?;
+    let mainloop =
+        pw::main_loop::MainLoopRc::new(None).context("Failed to create PipeWire mainloop")?;
     let context = pw::context::ContextRc::new(&mainloop, None)
         .context("Failed to create PipeWire context")?;
-    let core = context.connect_rc(None)
+    let core = context
+        .connect_rc(None)
         .context("Failed to connect to PipeWire core")?;
 
     let capture_props = properties! {
@@ -86,7 +87,9 @@ fn test_pipewire_capture_stream() -> Result<()> {
     stream.connect(
         pw::spa::utils::Direction::Input,
         None,
-        pw::stream::StreamFlags::AUTOCONNECT | pw::stream::StreamFlags::MAP_BUFFERS | pw::stream::StreamFlags::RT_PROCESS,
+        pw::stream::StreamFlags::AUTOCONNECT
+            | pw::stream::StreamFlags::MAP_BUFFERS
+            | pw::stream::StreamFlags::RT_PROCESS,
         &mut params,
     )?;
 
@@ -106,7 +109,10 @@ fn test_mic_monitor_spectrum() -> Result<()> {
     thread::sleep(Duration::from_millis(600));
 
     let spec = monitor.get_spectrum();
-    println!("MicMonitor captured RMS: {:.1} dBFS, Peak: {:.4}", spec.rms_db, spec.peak_level);
+    println!(
+        "MicMonitor captured RMS: {:.1} dBFS, Peak: {:.4}",
+        spec.rms_db, spec.peak_level
+    );
     assert_eq!(spec.bands.len(), 32);
 
     monitor.set_enabled(false);

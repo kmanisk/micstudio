@@ -47,7 +47,14 @@ impl Biquad {
         self.s2 = 0.0;
     }
 
-    pub fn configure(&mut self, filter_type: FilterType, freq_hz: f32, q: f32, gain_db: f32, sample_rate: f32) {
+    pub fn configure(
+        &mut self,
+        filter_type: FilterType,
+        freq_hz: f32,
+        q: f32,
+        gain_db: f32,
+        sample_rate: f32,
+    ) {
         let f0 = freq_hz.clamp(10.0, sample_rate * 0.499);
         let q = q.max(0.01);
         let w0 = 2.0 * std::f32::consts::PI * f0 / sample_rate;
@@ -73,14 +80,7 @@ impl Biquad {
                 -2.0 * cos_w0,
                 1.0 - alpha,
             ),
-            FilterType::BandPass => (
-                alpha,
-                0.0,
-                -alpha,
-                1.0 + alpha,
-                -2.0 * cos_w0,
-                1.0 - alpha,
-            ),
+            FilterType::BandPass => (alpha, 0.0, -alpha, 1.0 + alpha, -2.0 * cos_w0, 1.0 - alpha),
             FilterType::Notch => (
                 1.0,
                 -2.0 * cos_w0,

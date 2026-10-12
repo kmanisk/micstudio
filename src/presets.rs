@@ -216,9 +216,21 @@ impl Preset {
         };
         let formant_val = if self.formant_preserving { 1.0 } else { 0.0 };
         let flanger_bypass = if self.flanger_enabled { 0.0 } else { 1.0 };
-        let flanger_rate = if self.flanger_rate > 0.01 { self.flanger_rate } else { 0.5 };
-        let bitcrush_bits = if self.bitcrush_bits >= 1 && self.bitcrush_bits <= 24 { self.bitcrush_bits as f32 } else { 24.0 };
-        let downsample = if self.downsample_rate >= 1000 && self.downsample_rate <= 48000 { self.downsample_rate as f32 } else { 48000.0 };
+        let flanger_rate = if self.flanger_rate > 0.01 {
+            self.flanger_rate
+        } else {
+            0.5
+        };
+        let bitcrush_bits = if self.bitcrush_bits >= 1 && self.bitcrush_bits <= 24 {
+            self.bitcrush_bits as f32
+        } else {
+            24.0
+        };
+        let downsample = if self.downsample_rate >= 1000 && self.downsample_rate <= 48000 {
+            self.downsample_rate as f32
+        } else {
+            48000.0
+        };
         let square_level = if self.ringmod_square > 0.01 { 1.0 } else { 0.0 };
         let sine_level = if square_level > 0.5 { 0.0 } else { 1.0 };
 
@@ -351,6 +363,72 @@ impl Preset {
 
         params
     }
+
+    /// Return ordered active stages summary for UI display
+    pub fn stage_pipeline_summary(&self) -> Vec<String> {
+        let mut stages = vec![format!("DPDFNet ({:.0}dB)", self.dpdfnet_attenuation_db)];
+        if self.pitch_semitones.abs() > 0.01 {
+            let label = if self.formant_preserving {
+                format!("Pitch ({:+.1}st, Formants)", self.pitch_semitones)
+            } else {
+                format!("Pitch ({:+.1}st)", self.pitch_semitones)
+            };
+            stages.push(label);
+        }
+        if self.ringmod_depth > 0.01 {
+            let label = if self.ringmod_square > 0.5 {
+                format!("Chopper ({:.0}Hz)", self.ringmod_freq)
+            } else {
+                format!("Modulation ({:.0}Hz)", self.ringmod_freq)
+            };
+            stages.push(label);
+        }
+        if self.bitcrush_bits < 24 || self.downsample_rate < 48000 {
+            stages.push(format!(
+                "Decimator ({}-bit, {}Hz)",
+                self.bitcrush_bits, self.downsample_rate
+            ));
+        }
+        if self.distortion_level > 0.01 {
+            stages.push(format!(
+                "Tube Drive ({:.0}%)",
+                self.distortion_level * 100.0
+            ));
+        }
+        if self.flanger_enabled {
+            stages.push(format!("Flanger ({:.1}Hz)", self.flanger_rate));
+        }
+        if self.delay_mix < 0.99 {
+            stages.push(format!("Echo ({:.0}ms)", self.delay_time * 1000.0));
+        }
+        if self.hpf_freq > 25.0 || self.lpf_freq < 19000.0 {
+            stages.push(format!(
+                "Bandpass ({:.0}-{:.0}Hz)",
+                self.hpf_freq, self.lpf_freq
+            ));
+        }
+        if self.eq_gain.abs() > 0.1 {
+            stages.push(format!("Tone EQ ({:+.1}dB)", self.eq_gain));
+        }
+        stages.push("LSP Limiter (-3dBFS)".to_string());
+        stages
+    }
+
+    /// Return relevant technical capability notes or architectural limitations
+    pub fn limitations_note(&self) -> Option<String> {
+        if self.category == "Robot/Vocoder" {
+            Some("Carrier generated via in-process modulation (self-carrier; no external carrier stream needed)".to_string())
+        } else if self.pitch_semitones.abs() > 0.01 && self.formant_preserving {
+            Some("Formant preservation active via RubberBand live phase-vocoder engine".to_string())
+        } else if self.name == "Natural Clean" {
+            Some(
+                "Reference broadcast baseline: pure 6-stage DPDFNet + EQ + Compressor + Limiter"
+                    .to_string(),
+            )
+        } else {
+            None
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -385,45 +463,55 @@ impl PresetConfig {
             Preset {
                 name: "Deep Voice".to_string(),
                 category: "Natural".to_string(),
-                description: "Natural warm radio announcer voice with formant preservation (-4.5 st)".to_string(),
-                dpdfnet_attenuation_db: 48.0,
-                pitch_semitones: -4.5,
+                description: "Natural warm baritone voice with preserved vocal formants (-3.5 st)".to_string(),
+                dpdfnet_attenuation_db: 45.0,
+                pitch_semitones: -3.5,
                 formant_preserving: true,
-                eq_freq: 200.0,
-                eq_gain: 2.0,
+                hpf_freq: 80.0,
+                eq_freq: 2400.0,
+                eq_gain: 1.5,
                 ..Default::default()
             },
             Preset {
                 name: "Radio Announcer".to_string(),
                 category: "Natural".to_string(),
-                description: "Warm resonant broadcast studio tone with slight tube body (-2.0 st)".to_string(),
+                description: "Warm, resonant broadcast studio tone with broadcast EQ & tube warmth".to_string(),
                 dpdfnet_attenuation_db: 45.0,
-                pitch_semitones: -2.0,
+                pitch_semitones: 0.0,
                 formant_preserving: true,
-                distortion_level: 0.08,
-                eq_freq: 2500.0,
-                eq_gain: 3.0,
+                distortion_level: 0.04,
+                hpf_freq: 85.0,
+                eq_freq: 3200.0,
+                eq_gain: 2.5,
+                eq_q: 0.8,
                 ..Default::default()
             },
             Preset {
                 name: "Higher Voice".to_string(),
                 category: "Natural".to_string(),
-                description: "Natural pitch elevation with preserved vocal formants (+3.5 st)".to_string(),
+                description: "Natural pitch elevation with preserved vocal formants (+3.0 st)".to_string(),
                 dpdfnet_attenuation_db: 45.0,
-                pitch_semitones: 3.5,
+                pitch_semitones: 3.0,
                 formant_preserving: true,
+                hpf_freq: 100.0,
+                eq_freq: 3500.0,
+                eq_gain: 1.5,
                 ..Default::default()
             },
             Preset {
                 name: "Gruff Growl".to_string(),
                 category: "Natural".to_string(),
-                description: "Deep gravelly baritone with aggressive harmonic tube saturation (-4.0 st)".to_string(),
-                dpdfnet_attenuation_db: 50.0,
-                pitch_semitones: -4.0,
+                description: "Raspy, heavy baritone growl with subharmonic grit and tube drive (-3.0 st)".to_string(),
+                dpdfnet_attenuation_db: 48.0,
+                pitch_semitones: -3.0,
                 formant_preserving: false,
-                distortion_level: 0.25,
-                eq_freq: 180.0,
-                eq_gain: 3.5,
+                ringmod_depth: 0.15,
+                ringmod_freq: 48.0,
+                distortion_level: 0.14,
+                hpf_freq: 90.0,
+                eq_freq: 2600.0,
+                eq_gain: 2.0,
+                eq_q: 1.2,
                 ..Default::default()
             },
 
@@ -431,74 +519,92 @@ impl PresetConfig {
             Preset {
                 name: "Chipmunk".to_string(),
                 category: "Character".to_string(),
-                description: "High-pitched animated cartoon character voice (+8.0 st)".to_string(),
-                dpdfnet_attenuation_db: 55.0,
-                pitch_semitones: 8.0,
+                description: "High-pitched animated cartoon character with upward formant shift (+7.0 st)".to_string(),
+                dpdfnet_attenuation_db: 48.0,
+                pitch_semitones: 7.0,
                 formant_preserving: false,
+                hpf_freq: 120.0,
+                lpf_freq: 12000.0,
+                eq_freq: 2800.0,
+                eq_gain: 1.5,
                 ..Default::default()
             },
             Preset {
                 name: "Darth Vader".to_string(),
                 category: "Character".to_string(),
-                description: "Deep villain voice (-6.0 st) with heavy presence and subtle metallic breath".to_string(),
-                dpdfnet_attenuation_db: 65.0,
-                pitch_semitones: -6.0,
+                description: "Deep villain voice (-5.0 st) with acoustic respirator resonance & crisp articulation".to_string(),
+                dpdfnet_attenuation_db: 48.0,
+                pitch_semitones: -5.0,
                 formant_preserving: false,
-                ringmod_depth: 0.12,
-                ringmod_freq: 35.0,
-                distortion_level: 0.12,
-                eq_freq: 120.0,
-                eq_gain: 4.0,
+                ringmod_depth: 0.10,
+                ringmod_freq: 38.0,
+                distortion_level: 0.08,
+                hpf_freq: 75.0,
+                lpf_freq: 9000.0,
+                eq_freq: 2800.0,
+                eq_gain: 2.5,
                 ..Default::default()
             },
             Preset {
                 name: "Megatron".to_string(),
                 category: "Character".to_string(),
-                description: "Robotic overlord (-5.0 st) with aggressive ring modulation and 14-bit crunch".to_string(),
-                dpdfnet_attenuation_db: 75.0,
-                pitch_semitones: -5.0,
-                ringmod_depth: 0.55,
-                ringmod_freq: 68.0,
-                bitcrush_bits: 14,
-                distortion_level: 0.20,
+                description: "Metallic robotic warlord (-3.5 st) with 75 Hz ring mod, comb flanger & 16-bit drive".to_string(),
+                dpdfnet_attenuation_db: 48.0,
+                pitch_semitones: -3.5,
+                formant_preserving: false,
+                ringmod_depth: 0.35,
+                ringmod_freq: 75.0,
+                bitcrush_bits: 16,
+                distortion_level: 0.12,
+                flanger_enabled: true,
+                flanger_rate: 0.7,
+                eq_freq: 3200.0,
+                eq_gain: 2.5,
+                eq_q: 1.2,
                 ..Default::default()
             },
             Preset {
                 name: "Giant".to_string(),
                 category: "Character".to_string(),
-                description: "Enormous subterranean behemoth (-8.5 st) with echoing cavern resonance".to_string(),
-                dpdfnet_attenuation_db: 55.0,
-                pitch_semitones: -8.5,
+                description: "Enormous subterranean behemoth (-6.0 st) with short cavern slapback".to_string(),
+                dpdfnet_attenuation_db: 48.0,
+                pitch_semitones: -6.0,
                 formant_preserving: false,
-                delay_mix: 0.35,
-                delay_time: 0.12,
-                delay_feedback: 35.0,
-                eq_freq: 100.0,
-                eq_gain: 5.0,
+                delay_mix: 0.75,
+                delay_time: 0.08,
+                delay_feedback: 20.0,
+                hpf_freq: 70.0,
+                eq_freq: 2200.0,
+                eq_gain: 2.0,
                 ..Default::default()
             },
             Preset {
                 name: "Goblin".to_string(),
                 category: "Character".to_string(),
-                description: "Shrieking mischievous goblin (+6.0 st) with harsh nasal saturation".to_string(),
-                dpdfnet_attenuation_db: 60.0,
-                pitch_semitones: 6.0,
-                ringmod_depth: 0.20,
-                ringmod_freq: 180.0,
-                distortion_level: 0.22,
-                eq_freq: 3200.0,
-                eq_gain: 4.0,
+                description: "Mischievous nasal goblin (+4.5 st) with 1.6 kHz formant peak & controlled rasp".to_string(),
+                dpdfnet_attenuation_db: 48.0,
+                pitch_semitones: 4.5,
+                formant_preserving: false,
+                ringmod_depth: 0.12,
+                ringmod_freq: 120.0,
+                distortion_level: 0.10,
+                hpf_freq: 150.0,
+                lpf_freq: 7500.0,
+                eq_freq: 1600.0,
+                eq_gain: 3.0,
+                eq_q: 1.5,
                 ..Default::default()
             },
             Preset {
                 name: "Child".to_string(),
                 category: "Character".to_string(),
-                description: "Believable youthful child voice with natural formant preservation (+4.5 st)".to_string(),
-                dpdfnet_attenuation_db: 50.0,
-                pitch_semitones: 4.5,
+                description: "Believable youthful voice with natural formant preservation (+2.8 st)".to_string(),
+                dpdfnet_attenuation_db: 45.0,
+                pitch_semitones: 2.8,
                 formant_preserving: true,
+                hpf_freq: 110.0,
                 eq_freq: 2800.0,
-                eq_gain: 2.0,
+                eq_gain: 1.0,
                 ..Default::default()
             },
 
@@ -506,58 +612,75 @@ impl PresetConfig {
             Preset {
                 name: "Robot".to_string(),
                 category: "Robot/Vocoder".to_string(),
-                description: "Resonant metallic ring-modulated robot voice (-2.0 st, 110 Hz RM)".to_string(),
-                dpdfnet_attenuation_db: 85.0,
-                pitch_semitones: -2.0,
-                ringmod_depth: 1.0,
-                ringmod_freq: 110.0,
+                description: "Synthesized robotic voice with 90 Hz amplitude modulation & focused speech band".to_string(),
+                dpdfnet_attenuation_db: 48.0,
+                pitch_semitones: 0.0,
+                ringmod_depth: 0.55,
+                ringmod_freq: 90.0,
+                hpf_freq: 150.0,
+                lpf_freq: 6000.0,
+                eq_freq: 2200.0,
+                eq_gain: 2.5,
+                eq_q: 1.2,
                 ..Default::default()
             },
             Preset {
                 name: "Cylon".to_string(),
                 category: "Robot/Vocoder".to_string(),
-                description: "Deep mechanical Centurion vocoder (-4.0 st, 85 Hz carrier, short delay)".to_string(),
-                dpdfnet_attenuation_db: 85.0,
-                pitch_semitones: -4.0,
+                description: "Battlestar Centurion robotic voice (-3.0 st, 16 Hz square tremolo & comb slap)".to_string(),
+                dpdfnet_attenuation_db: 50.0,
+                pitch_semitones: -3.0,
                 ringmod_depth: 0.85,
-                ringmod_freq: 85.0,
-                delay_mix: 0.25,
-                delay_time: 0.06,
-                distortion_level: 0.15,
+                ringmod_freq: 16.0,
+                ringmod_square: 1.0,
+                distortion_level: 0.10,
+                delay_mix: 0.80,
+                delay_time: 0.04,
+                delay_feedback: 15.0,
+                hpf_freq: 120.0,
                 ..Default::default()
             },
             Preset {
                 name: "Daft Punk".to_string(),
                 category: "Robot/Vocoder".to_string(),
-                description: "French electro vocoder synthesis (125 Hz carrier, 14-bit talkbox)".to_string(),
-                dpdfnet_attenuation_db: 90.0,
+                description: "Polished French electro synth voice (+1.0 st, 150 Hz RM, 1.2 Hz flanger sweep)".to_string(),
+                dpdfnet_attenuation_db: 48.0,
                 pitch_semitones: 1.0,
-                ringmod_depth: 0.90,
-                ringmod_freq: 125.0,
-                bitcrush_bits: 14,
-                distortion_level: 0.10,
+                ringmod_depth: 0.40,
+                ringmod_freq: 150.0,
+                flanger_enabled: true,
+                flanger_rate: 1.2,
+                bitcrush_bits: 16,
+                distortion_level: 0.06,
+                eq_freq: 3800.0,
+                eq_gain: 2.5,
                 ..Default::default()
             },
             Preset {
                 name: "Kraftwerk".to_string(),
                 category: "Robot/Vocoder".to_string(),
-                description: "Vintage restrained electronic synth voice (145 Hz modulation, lowpass cut)".to_string(),
-                dpdfnet_attenuation_db: 85.0,
+                description: "Vintage restrained electronic synth voice (120 Hz modulation, 5 kHz lowpass cut)".to_string(),
+                dpdfnet_attenuation_db: 48.0,
                 pitch_semitones: 0.0,
-                ringmod_depth: 0.70,
-                ringmod_freq: 145.0,
-                lpf_freq: 5500.0,
+                ringmod_depth: 0.35,
+                ringmod_freq: 120.0,
+                hpf_freq: 180.0,
+                lpf_freq: 5000.0,
                 ..Default::default()
             },
             Preset {
                 name: "Dalek".to_string(),
                 category: "Robot/Vocoder".to_string(),
-                description: "Iconic BBC Doctor Who Dalek ring modulation (+1.5 st, 30 Hz RM)".to_string(),
-                dpdfnet_attenuation_db: 85.0,
-                pitch_semitones: 1.5,
+                description: "Iconic BBC Doctor Who Dalek ring modulation (+1.0 st, 30 Hz RM & valve drive)".to_string(),
+                dpdfnet_attenuation_db: 50.0,
+                pitch_semitones: 1.0,
                 ringmod_depth: 1.0,
                 ringmod_freq: 30.0,
-                distortion_level: 0.25,
+                distortion_level: 0.18,
+                hpf_freq: 220.0,
+                eq_freq: 2500.0,
+                eq_gain: 3.5,
+                eq_q: 1.5,
                 ..Default::default()
             },
 
@@ -565,62 +688,66 @@ impl PresetConfig {
             Preset {
                 name: "Walkie Talkie".to_string(),
                 category: "Radio/Space".to_string(),
-                description: "Bandpass filtered military comms (450–3200 Hz) with 12-bit lo-fi crunch".to_string(),
-                dpdfnet_attenuation_db: 60.0,
-                hpf_freq: 450.0,
-                lpf_freq: 3200.0,
+                description: "Military radio transceiver bandpass (480–3100 Hz, 8 kHz telecom downsample)".to_string(),
+                dpdfnet_attenuation_db: 48.0,
+                hpf_freq: 480.0,
+                lpf_freq: 3100.0,
                 bitcrush_bits: 12,
                 downsample_rate: 8000,
-                distortion_level: 0.20,
+                distortion_level: 0.14,
                 eq_freq: 1800.0,
                 eq_gain: 3.0,
+                eq_q: 1.2,
                 ..Default::default()
             },
             Preset {
                 name: "Old Telephone".to_string(),
                 category: "Radio/Space".to_string(),
-                description: "Vintage carbon-microphone telephone line (300–2800 Hz, 10-bit downsampled)".to_string(),
-                dpdfnet_attenuation_db: 60.0,
-                hpf_freq: 300.0,
-                lpf_freq: 2800.0,
-                bitcrush_bits: 10,
-                downsample_rate: 6000,
-                distortion_level: 0.15,
+                description: "Vintage POTS landline telephone (320–3400 Hz bandpass, clean carbon mic curve)".to_string(),
+                dpdfnet_attenuation_db: 48.0,
+                hpf_freq: 320.0,
+                lpf_freq: 3400.0,
+                bitcrush_bits: 12,
+                downsample_rate: 8000,
+                distortion_level: 0.05,
+                eq_freq: 1100.0,
+                eq_gain: 2.0,
                 ..Default::default()
             },
             Preset {
                 name: "Megaphone".to_string(),
                 category: "Radio/Space".to_string(),
-                description: "Acoustic public horn bullhorn (600–4000 Hz) with harsh horn saturation".to_string(),
-                dpdfnet_attenuation_db: 65.0,
-                hpf_freq: 600.0,
-                lpf_freq: 4000.0,
-                distortion_level: 0.35,
-                eq_freq: 2200.0,
-                eq_gain: 6.0,
+                description: "Projected public address horn (550–4200 Hz, 2 kHz horn bell resonance & drive)".to_string(),
+                dpdfnet_attenuation_db: 48.0,
+                hpf_freq: 550.0,
+                lpf_freq: 4200.0,
+                distortion_level: 0.16,
+                eq_freq: 2000.0,
+                eq_gain: 3.5,
+                eq_q: 1.5,
                 ..Default::default()
             },
             Preset {
                 name: "Cave".to_string(),
                 category: "Radio/Space".to_string(),
-                description: "Deep subterranean cavern echo (150ms pre-delay, 45% feedback)".to_string(),
-                dpdfnet_attenuation_db: 55.0,
-                delay_mix: 0.45,
-                delay_time: 0.15,
-                delay_feedback: 45.0,
-                lpf_freq: 7000.0,
+                description: "Deep cavern acoustic echo (140 ms pre-delay, 35% feedback, 5.5 kHz air damping)".to_string(),
+                dpdfnet_attenuation_db: 48.0,
+                delay_mix: 0.65,
+                delay_time: 0.14,
+                delay_feedback: 35.0,
+                lpf_freq: 5500.0,
                 ..Default::default()
             },
             Preset {
                 name: "Stadium Echo".to_string(),
                 category: "Radio/Space".to_string(),
-                description: "Massive public arena PA system echo (280ms slap, 55% feedback)".to_string(),
-                dpdfnet_attenuation_db: 55.0,
-                delay_mix: 0.40,
-                delay_time: 0.28,
-                delay_feedback: 55.0,
+                description: "Massive public arena PA system echo (240 ms slap, 45% feedback)".to_string(),
+                dpdfnet_attenuation_db: 48.0,
+                delay_mix: 0.70,
+                delay_time: 0.24,
+                delay_feedback: 45.0,
                 eq_freq: 3000.0,
-                eq_gain: 3.0,
+                eq_gain: 2.0,
                 ..Default::default()
             },
 
@@ -628,24 +755,24 @@ impl PresetConfig {
             Preset {
                 name: "Sci-Fi Alien".to_string(),
                 category: "Experimental".to_string(),
-                description: "Harmonic extraterrestrial voice (+5.0 st, 220 Hz RM, flanger modulation)".to_string(),
-                dpdfnet_attenuation_db: 65.0,
-                pitch_semitones: 5.0,
-                ringmod_depth: 0.65,
-                ringmod_freq: 220.0,
+                description: "Harmonic extraterrestrial voice (+4.0 st, 190 Hz RM, flanger modulation)".to_string(),
+                dpdfnet_attenuation_db: 48.0,
+                pitch_semitones: 4.0,
+                ringmod_depth: 0.40,
+                ringmod_freq: 190.0,
                 flanger_enabled: true,
-                flanger_rate: 0.8,
+                flanger_rate: 0.6,
                 ..Default::default()
             },
             Preset {
                 name: "Ghost".to_string(),
                 category: "Experimental".to_string(),
-                description: "Ethereal spectral whisper (+2.0 st, long ambient feedback delay, flanger)".to_string(),
-                dpdfnet_attenuation_db: 55.0,
+                description: "Ethereal spectral whisper (+2.0 st, ambient feedback delay & liquid flanger)".to_string(),
+                dpdfnet_attenuation_db: 48.0,
                 pitch_semitones: 2.0,
-                delay_mix: 0.50,
-                delay_time: 0.20,
-                delay_feedback: 60.0,
+                delay_mix: 0.65,
+                delay_time: 0.18,
+                delay_feedback: 45.0,
                 flanger_enabled: true,
                 flanger_rate: 0.3,
                 ..Default::default()
@@ -653,49 +780,50 @@ impl PresetConfig {
             Preset {
                 name: "Demon".to_string(),
                 category: "Experimental".to_string(),
-                description: "Abyssal demonic entity (-7.0 st, 40 Hz growl, heavy valve distortion)".to_string(),
-                dpdfnet_attenuation_db: 70.0,
-                pitch_semitones: -7.0,
-                ringmod_depth: 0.30,
-                ringmod_freq: 40.0,
-                distortion_level: 0.40,
-                eq_freq: 120.0,
-                eq_gain: 5.0,
+                description: "Abyssal demonic entity (-6.0 st, 42 Hz growl, tube distortion & presence)".to_string(),
+                dpdfnet_attenuation_db: 50.0,
+                pitch_semitones: -6.0,
+                ringmod_depth: 0.18,
+                ringmod_freq: 42.0,
+                distortion_level: 0.22,
+                hpf_freq: 80.0,
+                eq_freq: 2400.0,
+                eq_gain: 2.5,
                 ..Default::default()
             },
             Preset {
                 name: "Cyber Chopper".to_string(),
                 category: "Experimental".to_string(),
-                description: "Rhythmic gated cyber voice (8 Hz square AM stutter, -2.0 st pitch)".to_string(),
-                dpdfnet_attenuation_db: 80.0,
+                description: "Rhythmic cyber stutter voice (6 Hz square AM stutter, -2.0 st pitch)".to_string(),
+                dpdfnet_attenuation_db: 50.0,
                 pitch_semitones: -2.0,
-                ringmod_depth: 1.0,
-                ringmod_freq: 8.0,
+                ringmod_depth: 0.85,
+                ringmod_freq: 6.0,
                 ringmod_square: 1.0,
                 ..Default::default()
             },
             Preset {
                 name: "Underwater".to_string(),
                 category: "Experimental".to_string(),
-                description: "Submerged acoustic immersion (750 Hz lowpass, liquid flanger chorus)".to_string(),
-                dpdfnet_attenuation_db: 50.0,
-                lpf_freq: 750.0,
+                description: "Submerged acoustic immersion (650 Hz lowpass, liquid flanger chorus)".to_string(),
+                dpdfnet_attenuation_db: 45.0,
+                lpf_freq: 650.0,
                 flanger_enabled: true,
-                flanger_rate: 0.4,
-                eq_freq: 150.0,
-                eq_gain: 4.0,
+                flanger_rate: 0.35,
+                eq_freq: 180.0,
+                eq_gain: 3.0,
                 ..Default::default()
             },
             Preset {
                 name: "Lo-Fi Static".to_string(),
                 category: "Experimental".to_string(),
-                description: "Extreme 8-bit retro arcade degradation (4000 Hz sample rate, valve crunch)".to_string(),
-                dpdfnet_attenuation_db: 65.0,
-                bitcrush_bits: 8,
-                downsample_rate: 4000,
-                distortion_level: 0.30,
-                hpf_freq: 250.0,
-                lpf_freq: 4500.0,
+                description: "Vintage 10-bit arcade downsampling (6000 Hz sample rate, valve saturation)".to_string(),
+                dpdfnet_attenuation_db: 48.0,
+                bitcrush_bits: 10,
+                downsample_rate: 6000,
+                distortion_level: 0.18,
+                hpf_freq: 200.0,
+                lpf_freq: 5000.0,
                 ..Default::default()
             },
         ]
@@ -724,23 +852,37 @@ impl PresetManager {
     }
 
     pub fn factory_presets(&self) -> Vec<Preset> {
-        self.config.presets.iter().filter(|p| !p.user).cloned().collect()
+        self.config
+            .presets
+            .iter()
+            .filter(|p| !p.user)
+            .cloned()
+            .collect()
     }
 
     pub fn user_presets(&self) -> Vec<Preset> {
-        self.config.presets.iter().filter(|p| p.user).cloned().collect()
+        self.config
+            .presets
+            .iter()
+            .filter(|p| p.user)
+            .cloned()
+            .collect()
     }
 
     pub fn save_user_preset(&mut self, mut preset: Preset) -> Result<()> {
         preset.user = true;
-        self.config.presets.retain(|p| !p.name.eq_ignore_ascii_case(&preset.name));
+        self.config
+            .presets
+            .retain(|p| !p.name.eq_ignore_ascii_case(&preset.name));
         self.config.presets.push(preset);
         self.save()
     }
 
     pub fn delete_user_preset(&mut self, name: &str) -> Result<bool> {
         let before = self.config.presets.len();
-        self.config.presets.retain(|p| !(p.user && p.name.eq_ignore_ascii_case(name)));
+        self.config
+            .presets
+            .retain(|p| !(p.user && p.name.eq_ignore_ascii_case(name)));
         let deleted = self.config.presets.len() < before;
         if deleted {
             self.save()?;
@@ -766,6 +908,44 @@ impl PresetManager {
         self.save()
     }
 
+    /// Reset a factory preset to its default parameters
+    pub fn reset_preset(&mut self, name: &str) -> Result<bool> {
+        let factory_defs = PresetConfig::default_factory_presets();
+        let Some(def) = factory_defs
+            .into_iter()
+            .find(|p| p.name.eq_ignore_ascii_case(name))
+        else {
+            return Ok(false);
+        };
+        if let Some(target) = self
+            .config
+            .presets
+            .iter_mut()
+            .find(|p| p.name.eq_ignore_ascii_case(name))
+        {
+            let verified = target.verified;
+            *target = def;
+            target.verified = verified;
+            self.save()?;
+            return Ok(true);
+        }
+        Ok(false)
+    }
+
+    /// Update a preset in-place (e.g. from live control tweaks)
+    pub fn update_preset_parameters(&mut self, preset: &Preset) -> Result<()> {
+        if let Some(target) = self
+            .config
+            .presets
+            .iter_mut()
+            .find(|p| p.name.eq_ignore_ascii_case(&preset.name))
+        {
+            *target = preset.clone();
+            self.save()?;
+        }
+        Ok(())
+    }
+
     fn config_path(&self) -> PathBuf {
         self.config_dir.join("presets.toml")
     }
@@ -782,7 +962,10 @@ impl PresetManager {
             }
             if let Ok(val) = serde_json::from_str::<serde_json::Value>(&data) {
                 if let Some(arr) = val.get("verified_presets").and_then(|v| v.as_array()) {
-                    return arr.iter().filter_map(|s| s.as_str().map(String::from)).collect();
+                    return arr
+                        .iter()
+                        .filter_map(|s| s.as_str().map(String::from))
+                        .collect();
                 }
             }
         }
@@ -817,7 +1000,11 @@ impl PresetManager {
             if let Ok(mut parsed) = toml::from_str::<PresetConfig>(&data) {
                 // If loaded config has fewer than 20 presets, ensure all defaults are present
                 if parsed.presets.len() < 20 {
-                    let mut existing: HashSet<String> = parsed.presets.iter().map(|p| p.name.to_lowercase()).collect();
+                    let mut existing: HashSet<String> = parsed
+                        .presets
+                        .iter()
+                        .map(|p| p.name.to_lowercase())
+                        .collect();
                     for def in PresetConfig::default_factory_presets() {
                         if !existing.contains(&def.name.to_lowercase()) {
                             parsed.presets.push(def.clone());
@@ -826,8 +1013,14 @@ impl PresetManager {
                     }
                 }
                 for def in PresetConfig::default_factory_presets() {
-                    if let Some(p) = parsed.presets.iter_mut().find(|p| p.name.eq_ignore_ascii_case(&def.name) && !p.user) {
-                        p.dpdfnet_attenuation_db = def.dpdfnet_attenuation_db;
+                    if let Some(p) = parsed
+                        .presets
+                        .iter_mut()
+                        .find(|p| p.name.eq_ignore_ascii_case(&def.name) && !p.user)
+                    {
+                        let verified = p.verified;
+                        *p = def;
+                        p.verified = verified;
                     }
                 }
                 let verified_set = self.load_verified_set();
@@ -857,7 +1050,13 @@ impl PresetManager {
         fs::create_dir_all(&self.config_dir)?;
         let data = toml::to_string_pretty(&self.config)?;
         let path = self.config_path();
-        let tmp_path = self.config_dir.join("presets.toml.tmp");
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let tmp_path = self
+            .config_dir
+            .join(format!("presets.toml.tmp.{}.{}", std::process::id(), nanos));
         fs::write(&tmp_path, data)?;
         fs::rename(&tmp_path, &path)?;
         Ok(())

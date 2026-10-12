@@ -91,7 +91,10 @@ pub fn read_wav_mono(path: &Path) -> Result<(Vec<f32>, WavInfo)> {
 
     match (spec.sample_format, spec.bits_per_sample) {
         (SampleFormat::Int, 16) => {
-            let samples: Vec<i16> = reader.into_samples::<i16>().filter_map(Result::ok).collect();
+            let samples: Vec<i16> = reader
+                .into_samples::<i16>()
+                .filter_map(Result::ok)
+                .collect();
             let num_frames = samples.len() / channels;
             raw_mono.reserve(num_frames);
 
@@ -116,7 +119,10 @@ pub fn read_wav_mono(path: &Path) -> Result<(Vec<f32>, WavInfo)> {
             }
         }
         (SampleFormat::Int, 24) => {
-            let samples: Vec<i32> = reader.into_samples::<i32>().filter_map(Result::ok).collect();
+            let samples: Vec<i32> = reader
+                .into_samples::<i32>()
+                .filter_map(Result::ok)
+                .collect();
             let num_frames = samples.len() / channels;
             raw_mono.reserve(num_frames);
 
@@ -141,7 +147,10 @@ pub fn read_wav_mono(path: &Path) -> Result<(Vec<f32>, WavInfo)> {
             }
         }
         (SampleFormat::Int, 32) => {
-            let samples: Vec<i32> = reader.into_samples::<i32>().filter_map(Result::ok).collect();
+            let samples: Vec<i32> = reader
+                .into_samples::<i32>()
+                .filter_map(Result::ok)
+                .collect();
             let num_frames = samples.len() / channels;
             raw_mono.reserve(num_frames);
 
@@ -166,7 +175,10 @@ pub fn read_wav_mono(path: &Path) -> Result<(Vec<f32>, WavInfo)> {
             }
         }
         (SampleFormat::Float, 32) => {
-            let samples: Vec<f32> = reader.into_samples::<f32>().filter_map(Result::ok).collect();
+            let samples: Vec<f32> = reader
+                .into_samples::<f32>()
+                .filter_map(Result::ok)
+                .collect();
             let num_frames = samples.len() / channels;
             raw_mono.reserve(num_frames);
 
@@ -196,8 +208,16 @@ pub fn read_wav_mono(path: &Path) -> Result<(Vec<f32>, WavInfo)> {
 
     let n = raw_mono.len();
     let duration = n as f64 / spec.sample_rate as f64;
-    let rms = if n > 0 { (sum_sq / n as f64).sqrt() as f32 } else { 0.0 };
-    let rms_db = if rms > 1e-7 { 20.0 * rms.log10() } else { -96.0 };
+    let rms = if n > 0 {
+        (sum_sq / n as f64).sqrt() as f32
+    } else {
+        0.0
+    };
+    let rms_db = if rms > 1e-7 {
+        20.0 * rms.log10()
+    } else {
+        -96.0
+    };
     let dc = if n > 0 { (sum / n as f64) as f32 } else { 0.0 };
 
     let info = WavInfo {
@@ -231,7 +251,11 @@ pub fn resample_to_48k(samples: &[f32], src_rate: u32) -> Vec<f32> {
         let idx = pos.floor() as usize;
         let frac = (pos - idx as f64) as f32;
 
-        let s0 = if idx > 0 { samples[idx - 1] } else { samples[0] };
+        let s0 = if idx > 0 {
+            samples[idx - 1]
+        } else {
+            samples[0]
+        };
         let s1 = samples.get(idx).copied().unwrap_or(0.0);
         let s2 = samples.get(idx + 1).copied().unwrap_or(s1);
         let s3 = samples.get(idx + 2).copied().unwrap_or(s2);
@@ -289,8 +313,16 @@ pub fn write_wav_24bit_48k(path: &Path, samples: &[f32]) -> Result<WavInfo> {
 
     let n = samples.len();
     let duration = n as f64 / 48000.0;
-    let rms = if n > 0 { (sum_sq / n as f64).sqrt() as f32 } else { 0.0 };
-    let rms_db = if rms > 1e-7 { 20.0 * rms.log10() } else { -96.0 };
+    let rms = if n > 0 {
+        (sum_sq / n as f64).sqrt() as f32
+    } else {
+        0.0
+    };
+    let rms_db = if rms > 1e-7 {
+        20.0 * rms.log10()
+    } else {
+        -96.0
+    };
     let dc = if n > 0 { (sum / n as f64) as f32 } else { 0.0 };
 
     Ok(WavInfo {
@@ -357,14 +389,28 @@ pub fn render_file(options: &RenderOptions) -> Result<RenderResult> {
     let out_info = write_wav_24bit_48k(&options.output_path, &output_samples)?;
 
     let denoise_active = options.cleanup_enabled
-        && options.denoise_override.unwrap_or(options.preset.noise_suppression);
+        && options
+            .denoise_override
+            .unwrap_or(options.preset.noise_suppression);
     let denoise_blend = options.denoise_blend_override.unwrap_or(1.0);
     let gate_active = options.cleanup_enabled
-        && options.gate_override.unwrap_or(options.preset.noise_suppression);
+        && options
+            .gate_override
+            .unwrap_or(options.preset.noise_suppression);
 
     Ok(RenderResult {
-        input_file: options.input_path.file_name().unwrap_or_default().to_string_lossy().to_string(),
-        output_file: options.output_path.file_name().unwrap_or_default().to_string_lossy().to_string(),
+        input_file: options
+            .input_path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string(),
+        output_file: options
+            .output_path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string(),
         preset_name: options.preset.name.clone(),
         input_info: in_info,
         output_info: out_info,

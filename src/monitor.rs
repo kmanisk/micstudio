@@ -2,7 +2,7 @@
 //! Reads audio directly from ghelper-audio via PipeWire without creating virtual devices.
 
 use crate::dsp::pipeline::AudioTelemetry;
-use crate::dsp::spectrum::{LiveSpectrumData, SpectrumAnalyzer, FFT_SIZE, NUM_BANDS};
+use crate::dsp::spectrum::{FFT_SIZE, LiveSpectrumData, NUM_BANDS, SpectrumAnalyzer};
 use anyhow::{Context, Result};
 use libspa::sys as spa_sys;
 use pipewire as pw;
@@ -101,11 +101,12 @@ impl MicMonitor {
     ) -> Result<()> {
         pw::init();
 
-        let mainloop = pw::main_loop::MainLoopRc::new(None)
-            .context("Failed to create PipeWire mainloop")?;
+        let mainloop =
+            pw::main_loop::MainLoopRc::new(None).context("Failed to create PipeWire mainloop")?;
         let context = pw::context::ContextRc::new(&mainloop, None)
             .context("Failed to create PipeWire context")?;
-        let core = context.connect_rc(None)
+        let core = context
+            .connect_rc(None)
             .context("Failed to connect to PipeWire core")?;
 
         let capture_props = properties! {
@@ -145,7 +146,8 @@ impl MicMonitor {
                         for i in 0..n_frames {
                             let start = i * stride;
                             let end = start + stride;
-                            let bytes: [u8; 4] = valid_slice[start..end].try_into().unwrap_or([0; 4]);
+                            let bytes: [u8; 4] =
+                                valid_slice[start..end].try_into().unwrap_or([0; 4]);
                             let s = f32::from_ne_bytes(bytes);
                             sample_ring.push(s);
                         }
@@ -197,8 +199,8 @@ impl MicMonitor {
         .0
         .into_inner();
 
-        let pod = pw::spa::pod::Pod::from_bytes(&format_pod)
-            .context("Failed to parse format pod")?;
+        let pod =
+            pw::spa::pod::Pod::from_bytes(&format_pod).context("Failed to parse format pod")?;
 
         let (pw_sender, pw_receiver) = pw::channel::channel();
         let _pw_listener = pw_receiver.attach(mainloop.loop_(), {
@@ -219,7 +221,9 @@ impl MicMonitor {
         stream.connect(
             pw::spa::utils::Direction::Input,
             None,
-            pw::stream::StreamFlags::AUTOCONNECT | pw::stream::StreamFlags::MAP_BUFFERS | pw::stream::StreamFlags::RT_PROCESS,
+            pw::stream::StreamFlags::AUTOCONNECT
+                | pw::stream::StreamFlags::MAP_BUFFERS
+                | pw::stream::StreamFlags::RT_PROCESS,
             &mut params,
         )?;
 

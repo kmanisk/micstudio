@@ -2,11 +2,11 @@
 
 use crate::ui::app::AppState;
 use ratatui::{
+    Frame,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph},
-    Frame,
 };
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
@@ -46,9 +46,11 @@ pub fn render_ui(frame: &mut Frame, state: &AppState) {
             "terminal too small (need 80x24, current: {}x{})",
             area.width, area.height
         );
-        let p = Paragraph::new(msg)
-            .alignment(Alignment::Center)
-            .style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD));
+        let p = Paragraph::new(msg).alignment(Alignment::Center).style(
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        );
         frame.render_widget(p, area);
         return;
     }
@@ -73,31 +75,50 @@ pub fn render_ui(frame: &mut Frame, state: &AppState) {
 }
 
 fn render_top_bar(frame: &mut Frame, area: Rect, state: &AppState) {
-    let is_clean = state.active_preset_name.eq_ignore_ascii_case("Natural Clean");
+    let is_clean = state
+        .active_preset_name
+        .eq_ignore_ascii_case("Natural Clean");
 
     let engine_state_spans = if is_clean {
         vec![
             Span::raw("State: "),
-            Span::styled("Clean", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "Clean",
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            ),
         ]
     } else {
         vec![
             Span::raw("State: "),
             Span::styled(
                 format!("FX ({})", state.active_preset_name),
-                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
             ),
         ]
     };
 
     let meter_spans = if !state.meter_enabled {
-        vec![Span::styled("Meter: off", Style::default().fg(Color::DarkGray))]
+        vec![Span::styled(
+            "Meter: off",
+            Style::default().fg(Color::DarkGray),
+        )]
     } else {
         let norm = ((state.input_rms_db + 60.0) / 6.0).clamp(0.0, 10.0).round() as usize;
         let filled = "█".repeat(norm);
         let empty = "░".repeat(10 - norm);
         let bar = format!("[{}{}]", filled, empty);
-        vec![
+        let peak_db = if state.spectrum.peak_level > 1e-5 {
+            20.0 * state.spectrum.peak_level.log10()
+        } else {
+            -96.0
+        };
+        let is_clipping = peak_db >= -0.5;
+
+        let mut spans = vec![
             Span::styled("Meter: ", Style::default().fg(Color::White)),
             Span::styled(
                 bar,
@@ -110,13 +131,27 @@ fn render_top_bar(frame: &mut Frame, area: Rect, state: &AppState) {
                 }),
             ),
             Span::raw(format!(" {:+5.1} dBFS", state.input_rms_db)),
-        ]
+            Span::styled(
+                format!(" (Pk: {:+5.1})", peak_db),
+                Style::default().fg(Color::DarkGray),
+            ),
+        ];
+        if is_clipping {
+            spans.push(Span::styled(
+                " [CLIP]",
+                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+            ));
+        }
+        spans
     };
 
     let mut spans = vec![
         Span::styled(
             " MICSTUDIO ",
-            Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
         ),
         Span::raw(" │ "),
     ];
@@ -167,8 +202,7 @@ fn render_left_pane(frame: &mut Frame, area: Rect, state: &AppState) {
 
     let filtered = state.filtered_indices();
     if filtered.is_empty() {
-        let p = Paragraph::new(" No matching presets")
-            .style(Style::default().fg(Color::DarkGray));
+        let p = Paragraph::new(" No matching presets").style(Style::default().fg(Color::DarkGray));
         frame.render_widget(p, inner);
         return;
     }
@@ -212,7 +246,9 @@ fn render_left_pane(frame: &mut Frame, area: Rect, state: &AppState) {
                 let text = format!("── {} ──", cat);
                 let line = Line::from(vec![Span::styled(
                     fit_string(&text, inner_w),
-                    Style::default().fg(Color::DarkGray).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(Color::DarkGray)
+                        .add_modifier(Modifier::BOLD),
                 )]);
                 rendered_lines.push(line);
             }
@@ -248,7 +284,9 @@ fn render_left_pane(frame: &mut Frame, area: Rect, state: &AppState) {
                 };
 
                 let active_style = if is_active {
-                    Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)
+                    Style::default()
+                        .fg(Color::Green)
+                        .add_modifier(Modifier::BOLD)
                 } else {
                     Style::default().fg(Color::DarkGray)
                 };
@@ -276,12 +314,14 @@ fn render_left_pane(frame: &mut Frame, area: Rect, state: &AppState) {
 
 fn render_right_pane(frame: &mut Frame, area: Rect, state: &AppState) {
     if state.sidetone_enabled {
+        let detail_height = if area.height <= 22 { 7 } else { 8 };
+        let controls_height = if area.height <= 22 { 8 } else { 10 };
         let vertical_chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(6), // Preset details
-                Constraint::Min(8),    // Live Spectrograph module (only when using 'v')
-                Constraint::Length(10), // Live Controls (6 items)
+                Constraint::Length(detail_height),   // Preset details
+                Constraint::Min(6), // Live Spectrograph module (only when using 'v')
+                Constraint::Length(controls_height), // Live Controls (6 items)
             ])
             .split(area);
 
@@ -292,7 +332,7 @@ fn render_right_pane(frame: &mut Frame, area: Rect, state: &AppState) {
         let vertical_chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Min(6),    // Preset details & Signal chain overview
+                Constraint::Min(8),     // Preset details & Signal chain overview
                 Constraint::Length(10), // Live Controls (6 items)
             ])
             .split(area);
@@ -304,48 +344,151 @@ fn render_right_pane(frame: &mut Frame, area: Rect, state: &AppState) {
 
 fn render_preset_details(frame: &mut Frame, area: Rect, state: &AppState) {
     let selected = state.selected_preset();
-    let title = format!(" Selected: {} ", fit_string(&selected.name, 28));
+    let is_selected_active = selected
+        .name
+        .eq_ignore_ascii_case(&state.active_preset_name);
+    let title = format!(" Selected Preset: {} ", fit_string(&selected.name, 28));
 
     let block = Block::default().borders(Borders::ALL).title(title);
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
+    if inner.height == 0 || inner.width == 0 {
+        return;
+    }
+
     let mut lines = Vec::new();
     let inner_w = inner.width as usize;
 
-    // Description line
-    let desc_fit = fit_string(&selected.description, inner_w);
-    lines.push(Line::from(vec![Span::styled(
-        desc_fit,
-        Style::default().fg(Color::DarkGray),
-    )]));
+    // Line 1: Identity badges & routing status
+    let mut header_spans = vec![Span::styled(
+        format!("[{}] ", selected.category),
+        Style::default()
+            .fg(Color::Magenta)
+            .add_modifier(Modifier::BOLD),
+    )];
+    if selected.verified {
+        header_spans.push(Span::styled(
+            "[VERIFIED] ",
+            Style::default().fg(Color::Green),
+        ));
+    }
+    if is_selected_active {
+        header_spans.push(Span::styled(
+            "[CURRENTLY ACTIVE] ",
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        ));
+        let src_node = if selected.name.eq_ignore_ascii_case("Natural Clean") {
+            "ghelper-audio (Clean Direct)"
+        } else {
+            "ghelper-audio-fx (Live FX)"
+        };
+        header_spans.push(Span::styled(
+            format!("Node: {}", src_node),
+            Style::default().fg(Color::Cyan),
+        ));
+    } else {
+        header_spans.push(Span::styled(
+            "[PREVIEW ONLY] ",
+            Style::default().fg(Color::Yellow),
+        ));
+        header_spans.push(Span::styled(
+            "(Press Enter to Apply)",
+            Style::default().fg(Color::DarkGray),
+        ));
+    }
+    lines.push(Line::from(header_spans));
 
-    // Active Parameters summary on compact single/double lines
+    // Line 2: Description
+    let desc_fit = fit_string(&selected.description, inner_w.saturating_sub(13));
+    lines.push(Line::from(vec![
+        Span::styled(
+            "Description: ",
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(desc_fit, Style::default().fg(Color::Gray)),
+    ]));
+
+    // Line 3: Stage Pipeline graph
+    let stages = selected.stage_pipeline_summary();
+    let stages_joined = stages.join(" ➔ ");
+    lines.push(Line::from(vec![
+        Span::styled(
+            "Pipeline   : ",
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            fit_string(&stages_joined, inner_w.saturating_sub(13)),
+            Style::default().fg(Color::LightCyan),
+        ),
+    ]));
+
+    // Line 4: DSP Parameters breakdown
     let nonzero = selected.nonzero_params();
     if nonzero.is_empty() {
         lines.push(Line::from(vec![
-            Span::styled("Params: ", Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
-            Span::styled("DPDFNet Krisp Clean (FX Direct Bypass)", Style::default().fg(Color::Green)),
+            Span::styled(
+                "Parameters : ",
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                "Direct bypass — pristine clean speech (DPDFNet 45dB)",
+                Style::default().fg(Color::Green),
+            ),
         ]));
     } else {
-        let mut param_spans = vec![
-            Span::styled("Params: ", Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
-        ];
         let mut param_strs = Vec::new();
         for (param, val) in nonzero {
             param_strs.push(format!("{}: {}", param, val));
         }
-        param_spans.push(Span::styled(
-            fit_string(&param_strs.join(" │ "), inner_w.saturating_sub(8)),
-            Style::default().fg(Color::Cyan),
-        ));
-        lines.push(Line::from(param_spans));
+        lines.push(Line::from(vec![
+            Span::styled(
+                "Parameters : ",
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                fit_string(&param_strs.join(" │ "), inner_w.saturating_sub(13)),
+                Style::default().fg(Color::Cyan),
+            ),
+        ]));
     }
 
-    if !state.sidetone_enabled && inner.height >= 5 {
+    // Line 5: Tech limitations note
+    if inner.height >= 5 {
+        if let Some(note) = selected.limitations_note() {
+            lines.push(Line::from(vec![
+                Span::styled(
+                    "Tech Note  : ",
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    fit_string(&note, inner_w.saturating_sub(13)),
+                    Style::default().fg(Color::DarkGray),
+                ),
+            ]));
+        }
+    }
+
+    // Line 6+: Sidetone prompt if sidetone is off and space permits
+    if !state.sidetone_enabled && inner.height >= 7 {
         lines.push(Line::from(vec![
-            Span::styled("Sidetone / Spectrograph: ", Style::default().fg(Color::White)),
-            Span::styled("Inactive (Press 'v' to hear your voice and activate live spectrograph)", Style::default().fg(Color::DarkGray)),
+            Span::styled("Monitoring : ", Style::default().fg(Color::White)),
+            Span::styled(
+                "Inactive (Press 'v' to monitor mic & view live real-time spectrograph)",
+                Style::default().fg(Color::DarkGray),
+            ),
         ]));
     }
 
@@ -361,7 +504,11 @@ fn render_spectrograph_module(frame: &mut Frame, area: Rect, state: &AppState) {
     let title = format!(
         " Live Spectrograph [{}] (m: mode, s: zoom) │ Peak: {:>+5.1} dB │ RMS: {:>+5.1} dB ",
         mode_str,
-        if state.spectrum.peak_level > 1e-5 { 20.0 * state.spectrum.peak_level.log10() } else { -96.0 },
+        if state.spectrum.peak_level > 1e-5 {
+            20.0 * state.spectrum.peak_level.log10()
+        } else {
+            -96.0
+        },
         state.spectrum.rms_db
     );
 
@@ -451,7 +598,12 @@ fn render_rta_bars(frame: &mut Frame, inner: Rect, state: &AppState) {
                 };
                 spans.push(Span::styled(ch.to_string(), row_style));
             } else if r == peak_row && peak > 0.05 {
-                spans.push(Span::styled("─", Style::default().fg(Color::White).add_modifier(Modifier::BOLD)));
+                spans.push(Span::styled(
+                    "─",
+                    Style::default()
+                        .fg(Color::White)
+                        .add_modifier(Modifier::BOLD),
+                ));
             } else {
                 spans.push(Span::raw(" "));
             }
@@ -510,7 +662,10 @@ fn render_waterfall_heatmap(frame: &mut Frame, inner: Rect, state: &AppState) {
                 } else if val < 0.85 {
                     spans.push(Span::styled("█", Style::default().fg(Color::Yellow)));
                 } else {
-                    spans.push(Span::styled("█", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)));
+                    spans.push(Span::styled(
+                        "█",
+                        Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+                    ));
                 }
             }
         } else {
@@ -534,7 +689,11 @@ fn render_fullscreen_spectrograph(frame: &mut Frame, area: Rect, state: &AppStat
 
     let title_rta = format!(
         " Fullscreen RTA Spectrum Analyzer (50 Hz – 16 kHz) │ Peak: {:>+5.1} dBFS │ RMS: {:>+5.1} dBFS ",
-        if state.spectrum.peak_level > 1e-5 { 20.0 * state.spectrum.peak_level.log10() } else { -96.0 },
+        if state.spectrum.peak_level > 1e-5 {
+            20.0 * state.spectrum.peak_level.log10()
+        } else {
+            -96.0
+        },
         state.spectrum.rms_db
     );
     let block_rta = Block::default()
@@ -605,9 +764,16 @@ fn render_live_controls(frame: &mut Frame, area: Rect, state: &AppState) {
     let is_sel_0 = state.selected_control == 0;
     let mark_0 = if is_sel_0 { "> " } else { "  " };
     let norm_atten = (state.dpdfnet_attenuation / 10.0).clamp(0.0, 10.0).round() as usize;
-    let bar_atten = format!("[{}{}]", "█".repeat(norm_atten), "░".repeat(10 - norm_atten));
+    let bar_atten = format!(
+        "[{}{}]",
+        "█".repeat(norm_atten),
+        "░".repeat(10 - norm_atten)
+    );
     let line_0_style = if is_sel_0 {
-        Style::default().bg(Color::Blue).fg(Color::White).add_modifier(Modifier::BOLD)
+        Style::default()
+            .bg(Color::Blue)
+            .fg(Color::White)
+            .add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(Color::White)
     };
@@ -625,10 +791,15 @@ fn render_live_controls(frame: &mut Frame, area: Rect, state: &AppState) {
     // 1: Output Gain (-24..+12 dB)
     let is_sel_1 = state.selected_control == 1;
     let mark_1 = if is_sel_1 { "> " } else { "  " };
-    let norm_gain = ((state.output_gain_db + 24.0) / 3.6).clamp(0.0, 10.0).round() as usize;
+    let norm_gain = ((state.output_gain_db + 24.0) / 3.6)
+        .clamp(0.0, 10.0)
+        .round() as usize;
     let bar_gain = format!("[{}{}]", "█".repeat(norm_gain), "░".repeat(10 - norm_gain));
     let line_1_style = if is_sel_1 {
-        Style::default().bg(Color::Blue).fg(Color::White).add_modifier(Modifier::BOLD)
+        Style::default()
+            .bg(Color::Blue)
+            .fg(Color::White)
+            .add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(Color::White)
     };
@@ -646,10 +817,15 @@ fn render_live_controls(frame: &mut Frame, area: Rect, state: &AppState) {
     // 2: Effect Mix (0..100% Wet)
     let is_sel_2 = state.selected_control == 2;
     let mark_2 = if is_sel_2 { "> " } else { "  " };
-    let norm_mix = (state.effect_mix_pct as f32 / 10.0).clamp(0.0, 10.0).round() as usize;
+    let norm_mix = (state.effect_mix_pct as f32 / 10.0)
+        .clamp(0.0, 10.0)
+        .round() as usize;
     let bar_mix = format!("[{}{}]", "█".repeat(norm_mix), "░".repeat(10 - norm_mix));
     let line_2_style = if is_sel_2 {
-        Style::default().bg(Color::Blue).fg(Color::White).add_modifier(Modifier::BOLD)
+        Style::default()
+            .bg(Color::Blue)
+            .fg(Color::White)
+            .add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(Color::White)
     };
@@ -668,12 +844,20 @@ fn render_live_controls(frame: &mut Frame, area: Rect, state: &AppState) {
     let is_sel_3 = state.selected_control == 3;
     let mark_3 = if is_sel_3 { "> " } else { "  " };
     let sidetone_state = if state.sidetone_enabled {
-        Span::styled("[ON]", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD))
+        Span::styled(
+            "[ON]",
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        )
     } else {
         Span::styled("[OFF]", Style::default().fg(Color::DarkGray))
     };
     let line_3_style = if is_sel_3 {
-        Style::default().bg(Color::Blue).fg(Color::White).add_modifier(Modifier::BOLD)
+        Style::default()
+            .bg(Color::Blue)
+            .fg(Color::White)
+            .add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(Color::White)
     };
@@ -687,12 +871,20 @@ fn render_live_controls(frame: &mut Frame, area: Rect, state: &AppState) {
     let is_sel_4 = state.selected_control == 4;
     let mark_4 = if is_sel_4 { "> " } else { "  " };
     let meter_state = if state.meter_enabled {
-        Span::styled("[ON]", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD))
+        Span::styled(
+            "[ON]",
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        )
     } else {
         Span::styled("[OFF]", Style::default().fg(Color::DarkGray))
     };
     let line_4_style = if is_sel_4 {
-        Style::default().bg(Color::Blue).fg(Color::White).add_modifier(Modifier::BOLD)
+        Style::default()
+            .bg(Color::Blue)
+            .fg(Color::White)
+            .add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(Color::White)
     };
@@ -710,7 +902,10 @@ fn render_live_controls(frame: &mut Frame, area: Rect, state: &AppState) {
         crate::ui::app::SpectrographMode::Waterfall => "[WATERFALL HEATMAP]",
     };
     let line_5_style = if is_sel_5 {
-        Style::default().bg(Color::Blue).fg(Color::White).add_modifier(Modifier::BOLD)
+        Style::default()
+            .bg(Color::Blue)
+            .fg(Color::White)
+            .add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(Color::White)
     };
@@ -720,25 +915,45 @@ fn render_live_controls(frame: &mut Frame, area: Rect, state: &AppState) {
         Span::styled(
             spec_mode_str,
             if is_sel_5 {
-                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(Color::Cyan)
             },
         ),
     ]));
 
+    if inner.height >= 7 {
+        lines.push(Line::raw(""));
+        lines.push(Line::from(vec![Span::styled(
+            " [r] Reset preset to default │ [w] Save live tweaks",
+            Style::default().fg(Color::DarkGray),
+        )]));
+    }
+
     let p = Paragraph::new(lines);
     frame.render_widget(p, inner);
 }
 
 fn render_bottom_bar(frame: &mut Frame, area: Rect, state: &AppState) {
-    let key_style = Style::default().fg(Color::White).add_modifier(Modifier::BOLD);
+    let key_style = Style::default()
+        .fg(Color::White)
+        .add_modifier(Modifier::BOLD);
     let action_style = Style::default().fg(Color::DarkGray);
 
     let mut spans = if state.search_mode {
         vec![
-            Span::styled("Search: ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-            Span::styled(format!("{}_", state.search_query), Style::default().fg(Color::White)),
+            Span::styled(
+                "Search: ",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                format!("{}_", state.search_query),
+                Style::default().fg(Color::White),
+            ),
             Span::styled(" (Enter done, Esc clear)", action_style),
         ]
     } else {
@@ -749,14 +964,20 @@ fn render_bottom_bar(frame: &mut Frame, area: Rect, state: &AppState) {
             Span::styled(" controls ", action_style),
             Span::styled("h/l", key_style),
             Span::styled(" adjust ", action_style),
-            Span::styled("s", key_style),
-            Span::styled(" spectrograph ", action_style),
-            Span::styled("m", key_style),
-            Span::styled(" mode ", action_style),
             Span::styled("Enter", key_style),
             Span::styled(" apply ", action_style),
             Span::styled("Space", key_style),
             Span::styled(" clean ", action_style),
+            Span::styled("r", key_style),
+            Span::styled(" reset ", action_style),
+            Span::styled("w", key_style),
+            Span::styled(" save ", action_style),
+            Span::styled("s", key_style),
+            Span::styled(" spec ", action_style),
+            Span::styled("m", key_style),
+            Span::styled(" mode ", action_style),
+            Span::styled("v", key_style),
+            Span::styled(" hear ", action_style),
             Span::styled("?", key_style),
             Span::styled(" help ", action_style),
             Span::styled("q", key_style),
@@ -768,7 +989,9 @@ fn render_bottom_bar(frame: &mut Frame, area: Rect, state: &AppState) {
         spans.push(Span::raw(" │ "));
         spans.push(Span::styled(
             fit_string(&msg, 24),
-            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
         ));
     }
 
@@ -777,8 +1000,8 @@ fn render_bottom_bar(frame: &mut Frame, area: Rect, state: &AppState) {
 }
 
 fn render_help_dialog(frame: &mut Frame, area: Rect, state: &AppState) {
-    let popup_w = 70.min(area.width.saturating_sub(4));
-    let popup_h = 20.min(area.height.saturating_sub(2));
+    let popup_w = 72.min(area.width.saturating_sub(4));
+    let popup_h = 24.min(area.height.saturating_sub(2));
 
     let popup_x = (area.width.saturating_sub(popup_w)) / 2;
     let popup_y = (area.height.saturating_sub(popup_h)) / 2;
@@ -787,12 +1010,16 @@ fn render_help_dialog(frame: &mut Frame, area: Rect, state: &AppState) {
 
     frame.render_widget(Clear, popup_rect);
 
-    let block = Block::default().borders(Borders::ALL).title(" MicStudio Help & DSP Stack ");
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" MicStudio Help & DSP Stack ");
     let inner = block.inner(popup_rect);
     frame.render_widget(block, popup_rect);
 
     let inner_w = inner.width as usize;
-    let key_style = Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD);
+    let key_style = Style::default()
+        .fg(Color::Yellow)
+        .add_modifier(Modifier::BOLD);
     let desc_style = Style::default().fg(Color::White);
 
     let stages_line = state.dynamic_stages.join(" → ");
@@ -812,7 +1039,10 @@ fn render_help_dialog(frame: &mut Frame, area: Rect, state: &AppState) {
         ]),
         Line::from(vec![
             Span::styled("s / m          ", key_style),
-            Span::styled(": Fullscreen Spectrograph / Toggle RTA vs Waterfall", desc_style),
+            Span::styled(
+                ": Fullscreen Spectrograph / Toggle RTA vs Waterfall",
+                desc_style,
+            ),
         ]),
         Line::from(vec![
             Span::styled("Enter          ", key_style),
@@ -821,6 +1051,17 @@ fn render_help_dialog(frame: &mut Frame, area: Rect, state: &AppState) {
         Line::from(vec![
             Span::styled("Space          ", key_style),
             Span::styled(": Immediately revert to Natural Clean", desc_style),
+        ]),
+        Line::from(vec![
+            Span::styled("r              ", key_style),
+            Span::styled(
+                ": Reset selected preset to factory default parameters",
+                desc_style,
+            ),
+        ]),
+        Line::from(vec![
+            Span::styled("w              ", key_style),
+            Span::styled(": Save current live tweaks to active preset", desc_style),
         ]),
         Line::from(vec![
             Span::styled("/              ", key_style),
@@ -836,7 +1077,10 @@ fn render_help_dialog(frame: &mut Frame, area: Rect, state: &AppState) {
         ]),
         Line::from(vec![
             Span::styled("Tab / S-Tab    ", key_style),
-            Span::styled(": Cycle live control (DPDFNet/Gain/Mix/Side/VU/Spec)", desc_style),
+            Span::styled(
+                ": Cycle live control (DPDFNet/Gain/Mix/Side/VU/Spec)",
+                desc_style,
+            ),
         ]),
         Line::from(vec![
             Span::styled("v / t          ", key_style),
@@ -851,12 +1095,12 @@ fn render_help_dialog(frame: &mut Frame, area: Rect, state: &AppState) {
             Span::styled(": Quit MicStudio", desc_style),
         ]),
         Line::raw(""),
-        Line::from(vec![
-            Span::styled(
-                "Active 40-mic.conf Stages: ",
-                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
-            ),
-        ]),
+        Line::from(vec![Span::styled(
+            "Active 40-mic.conf Stages: ",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )]),
         Line::from(vec![Span::styled(
             fit_string(&stages_line, inner_w),
             Style::default().fg(Color::Gray),
