@@ -3,7 +3,7 @@ use micstudio::dsp::effects::{BandpassEffect, Limiter, StutterGate};
 use micstudio::dsp::pipeline::DspPipeline;
 use micstudio::dsp::pitch::PitchShifter;
 use micstudio::dsp::vocoder::Vocoder;
-use micstudio::presets::PresetManager;
+use micstudio::presets::{Preset, PresetManager};
 use micstudio::renderer::{RenderOptions, render_file, resample_to_48k};
 use std::fs;
 
@@ -519,4 +519,154 @@ fn test_15_preset_manager_reset_and_update_tweaks() {
     let restored = mgr.find_preset("Deep Voice").unwrap();
     assert_eq!(restored.dpdfnet_attenuation_db, 45.0);
     assert_eq!(restored.pitch_semitones, original_deep.pitch_semitones);
+}
+
+#[test]
+fn test_16_delayorama_dry_passthrough_prevents_voice_duplication() {
+    let mgr = PresetManager::new().unwrap();
+
+    // Default preset delay_mix must be 0.0 (100% dry passthrough, no repeat/tap doubling)
+    let default_p = Preset::default();
+    assert_eq!(
+        default_p.delay_mix, 0.0,
+        "Preset::default().delay_mix must be 0.0 to prevent echoing"
+    );
+
+    // Deep Voice, Higher Voice, Chipmunk, Darth Vader, Robot MUST have delay_mix == 0.0
+    for non_echo_name in &[
+        "Natural Clean",
+        "Deep Voice",
+        "Higher Voice",
+        "Chipmunk",
+        "Darth Vader",
+        "Robot",
+        "Walkie Talkie",
+        "Old Telephone",
+        "Megaphone",
+        "Underwater",
+    ] {
+        let p = mgr.find_preset(non_echo_name).unwrap();
+        assert_eq!(
+            p.delay_mix, 0.0,
+            "Preset '{}' must have delay_mix == 0.0 to avoid repeating words",
+            non_echo_name
+        );
+        let payload = p.build_props_payload();
+        assert!(
+            payload.contains("\"delay:Dry/wet mix\" 0.00"),
+            "Payload for '{}' must explicitly set Dry/wet mix to 0.00",
+            non_echo_name
+        );
+    }
+
+    // Only intentional echo presets should have delay_mix > 0.0
+    for echo_name in &["Cave", "Stadium Echo", "Ghost"] {
+        let p = mgr.find_preset(echo_name).unwrap();
+        assert!(
+            p.delay_mix > 0.0,
+            "Intentional echo preset '{}' should have delay_mix > 0",
+            echo_name
+        );
+    }
+}
+
+#[test]
+fn test_17_quiet_voice_boost_compressor_math() {
+    use micstudio::config::CleanMicSettings;
+
+    let mut cfg = CleanMicSettings::default();
+    assert!(!cfg.quiet_voice_boost_enabled);
+    assert_eq!(cfg.quiet_voice_boost_db, 0.0);
+
+    // Baseline calculation (disabled / 0 dB)
+    let boost = cfg.quiet_voice_boost_db;
+    let (thresh_linear, makeup_linear) = if cfg.quiet_voice_boost_enabled && boost > 0.01 {
+        let thresh_db = (-12.0 - (boost * 1.5)).clamp(-24.0, -12.0);
+        let makeup_db = (3.0 + boost).clamp(3.0, 12.0);
+        (
+            10.0f32.powf(thresh_db / 20.0),
+            10.0f32.powf(makeup_db / 20.0),
+        )
+    } else {
+        (0.251189, 1.412538)
+    };
+    assert!((thresh_linear - 0.251189).abs() < 1e-5);
+    assert!((makeup_linear - 1.412538).abs() < 1e-5);
+
+    // +4 dB quiet speech boost
+    cfg.quiet_voice_boost_enabled = true;
+    cfg.quiet_voice_boost_db = 4.0;
+    let boost = cfg.quiet_voice_boost_db;
+    let (thresh_linear_4, makeup_linear_4) = {
+        let thresh_db = (-12.0 - (boost * 1.5)).clamp(-24.0, -12.0);
+        let makeup_db = (3.0 + boost).clamp(3.0, 12.0);
+        (
+            10.0f32.powf(thresh_db / 20.0),
+            10.0f32.powf(makeup_db / 20.0),
+        )
+    };
+    // -18 dBFS threshold: 10^(-18/20) ≈ 0.125893
+    assert!((thresh_linear_4 - 0.125893).abs() < 1e-4);
+    // +7 dBFS makeup: 10^(7/20) ≈ 2.238721
+    assert!((makeup_linear_4 - 2.238721).abs() < 1e-4);
+    // Threshold is lower, makeup is higher -> quiet speech is lifted
+    assert!(thresh_linear_4 < thresh_linear);
+    assert!(makeup_linear_4 > makeup_linear);
+
+    // Clamping test
+    cfg.quiet_voice_boost_db = 25.0;
+    cfg.validate_clamp();
+    assert_eq!(cfg.quiet_voice_boost_db, 10.0);
+}
+
+#[test]
+fn test_18_model_voice_boost_default_and_payload() {
+    let mgr = PresetManager::new().expect("Failed to initialize PresetManager");
+
+    // 1. Natural Clean baseline: model_gain_db == 0.0
+    let clean = mgr.find_preset("Natural Clean").unwrap();
+    assert_eq!(
+        clean.model_gain_db, 0.0,
+        "Natural Clean must have model_gain_db == 0.0"
+    );
+
+    // 2. All creative voice presets default to +2.0 dB
+    let all = mgr.all_presets();
+    let mut creative_count = 0;
+    for p in all {
+        if p.name.eq_ignore_ascii_case("Natural Clean") {
+            continue;
+        }
+        creative_count += 1;
+        assert_eq!(
+            p.model_gain_db, 2.0,
+            "Preset '{}' must default to +2.0 dB model voice boost",
+            p.name
+        );
+        let payload = p.build_props_payload();
+        // 10^(2/20) = 1.258925... formatted to 4 decimals is 1.2589
+        assert!(
+            payload.contains("\"limiter:Output gain (G)\" 1.2589"),
+            "Payload for '{}' must configure limiter output gain to +2 dB (1.2589), got: {}",
+            p.name,
+            payload
+        );
+    }
+    assert!(
+        creative_count >= 20,
+        "Expected at least 20 creative voice presets, found {}",
+        creative_count
+    );
+
+    // 3. Modifying model_gain_db dynamically adjusts the limiter output gain in payload
+    let mut custom = mgr.find_preset("Deep Voice").unwrap().clone();
+    custom.model_gain_db = 4.0;
+    // 10^(4/20) = 1.58489... formatted to 4 decimals is 1.5849
+    let payload_4db = custom.build_props_payload();
+    assert!(payload_4db.contains("\"limiter:Output gain (G)\" 1.5849"));
+
+    custom.model_gain_db = -3.0;
+    // 10^(-3/20) = 0.70794... formatted to 4 decimals is 0.7079
+    let payload_minus3db = custom.build_props_payload();
+    assert!(payload_minus3db.contains("\"limiter:Output gain (G)\" 0.7079"));
 }

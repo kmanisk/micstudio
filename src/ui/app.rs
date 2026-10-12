@@ -12,21 +12,25 @@ use std::time::Instant;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LiveControl {
     Dpdfnet = 0,
-    OutputGain = 1,
-    EffectMix = 2,
-    Sidetone = 3,
-    Meter = 4,
-    Spectrograph = 5,
+    QuietBoost = 1,
+    OutputGain = 2,
+    EffectMix = 3,
+    Sidetone = 4,
+    Meter = 5,
+    Spectrograph = 6,
 }
 
 impl LiveControl {
+    pub const COUNT: usize = 7;
+
     pub fn from_index(idx: usize) -> Self {
-        match idx % 6 {
+        match idx % Self::COUNT {
             0 => Self::Dpdfnet,
-            1 => Self::OutputGain,
-            2 => Self::EffectMix,
-            3 => Self::Sidetone,
-            4 => Self::Meter,
+            1 => Self::QuietBoost,
+            2 => Self::OutputGain,
+            3 => Self::EffectMix,
+            4 => Self::Sidetone,
+            5 => Self::Meter,
             _ => Self::Spectrograph,
         }
     }
@@ -45,6 +49,8 @@ pub struct AppState {
     pub selected_control: usize,
     pub dpdfnet_attenuation: f32,
     pub output_gain_db: f32,
+    pub quiet_boost_enabled: bool,
+    pub quiet_boost_db: f32,
     pub effect_mix_pct: u32,
     pub sidetone_enabled: bool,
     pub meter_enabled: bool,
@@ -94,6 +100,8 @@ impl AppState {
             selected_control: 0,
             dpdfnet_attenuation: cfg.dpdfnet_attenuation_db,
             output_gain_db: cfg.output_gain_db,
+            quiet_boost_enabled: cfg.quiet_voice_boost_enabled,
+            quiet_boost_db: cfg.quiet_voice_boost_db,
             effect_mix_pct: 100,
             sidetone_enabled: cfg.hear_voice,
             meter_enabled: cfg.meter_enabled,
@@ -203,14 +211,14 @@ impl AppState {
     }
 
     pub fn cycle_control_next(&mut self) {
-        self.selected_control = (self.selected_control + 1) % 6;
+        self.selected_control = (self.selected_control + 1) % LiveControl::COUNT;
     }
 
     pub fn cycle_control_prev(&mut self) {
         self.selected_control = if self.selected_control > 0 {
             self.selected_control - 1
         } else {
-            5
+            LiveControl::COUNT - 1
         };
     }
 
@@ -226,30 +234,84 @@ impl AppState {
                 cfg.save()?;
                 self.set_status(format!("DPDFNet Attenuation: {:.0} dB", new_val));
             }
-            LiveControl::OutputGain => {
+            LiveControl::QuietBoost => {
                 let delta = direction as f32 * 1.0;
-                let new_val = (self.output_gain_db + delta).clamp(-24.0, 12.0);
-                self.output_gain_db = new_val;
+                let new_val = (self.quiet_boost_db + delta).clamp(0.0, 10.0);
+                self.quiet_boost_db = new_val;
+                self.quiet_boost_enabled = new_val > 0.01;
                 let mut cfg = CleanMicSettings::load();
-                cfg.output_gain_db = new_val;
+                cfg.quiet_voice_boost_enabled = self.quiet_boost_enabled;
+                cfg.quiet_voice_boost_db = new_val;
                 cfg.apply_dsp_params()?;
                 cfg.save()?;
-                self.set_status(format!("Output Gain: {:+.1} dB", new_val));
+                if self.quiet_boost_enabled {
+                    self.set_status(format!(
+                        "Quiet Voice Boost: {:+.0} dB [ON] (Speech leveled across all models)",
+                        new_val
+                    ));
+                } else {
+                    self.set_status("Quiet Voice Boost: OFF (Pristine clean baseline)".to_string());
+                }
+            }
+            LiveControl::OutputGain => {
+                let is_clean = self
+                    .active_preset_name
+                    .eq_ignore_ascii_case("Natural Clean");
+                if is_clean {
+                    let delta = direction as f32 * 1.0;
+                    let new_val = (self.output_gain_db + delta).clamp(-24.0, 12.0);
+                    self.output_gain_db = new_val;
+                    let mut cfg = CleanMicSettings::load();
+                    cfg.output_gain_db = new_val;
+                    cfg.apply_dsp_params()?;
+                    cfg.save()?;
+                    self.set_status(format!("Clean Mic Output Gain: {:+.1} dB", new_val));
+                } else {
+                    let delta = direction as f32 * 1.0;
+                    let active_name = self.active_preset_name.clone();
+                    let mut status_msg = None;
+                    if let Some(p) = self
+                        .presets
+                        .iter_mut()
+                        .find(|p| p.name.eq_ignore_ascii_case(&active_name))
+                    {
+                        let new_val = (p.model_gain_db + delta).clamp(-12.0, 12.0);
+                        p.model_gain_db = new_val;
+                        let _ = crate::cli::apply_voice_silent(&p.name);
+                        status_msg = Some(format!(
+                            "Model Voice Boost ('{}'): {:+.1} dB (Output Level)",
+                            p.name, new_val
+                        ));
+                    }
+                    if let Some(msg) = status_msg {
+                        self.set_status(msg);
+                    }
+                }
             }
             LiveControl::EffectMix => {
-                let delta = direction * 5;
-                let new_val = (self.effect_mix_pct as i32 + delta).clamp(0, 100) as u32;
-                self.effect_mix_pct = new_val;
-                let wet_dry = 1.0 - (new_val as f32 / 100.0);
-                if let Some(p) = self
-                    .presets
-                    .iter_mut()
-                    .find(|p| p.name.eq_ignore_ascii_case(&self.active_preset_name))
-                {
-                    p.wet_dry_mix = wet_dry;
-                    let _ = crate::cli::apply_voice_silent(&p.name);
+                let is_clean = self
+                    .active_preset_name
+                    .eq_ignore_ascii_case("Natural Clean");
+                if is_clean {
+                    self.set_status(
+                        "Natural Clean is direct broadcast speech (100% clean, no FX mix)"
+                            .to_string(),
+                    );
+                } else {
+                    let delta = direction * 5;
+                    let new_val = (self.effect_mix_pct as i32 + delta).clamp(0, 100) as u32;
+                    self.effect_mix_pct = new_val;
+                    let wet_dry = 1.0 - (new_val as f32 / 100.0);
+                    if let Some(p) = self
+                        .presets
+                        .iter_mut()
+                        .find(|p| p.name.eq_ignore_ascii_case(&self.active_preset_name))
+                    {
+                        p.wet_dry_mix = wet_dry;
+                        let _ = crate::cli::apply_voice_silent(&p.name);
+                    }
+                    self.set_status(format!("Effect Mix: {}% Wet", new_val));
                 }
-                self.set_status(format!("Effect Mix: {}% Wet", new_val));
             }
             LiveControl::Sidetone => {
                 self.toggle_sidetone()?;
@@ -351,6 +413,9 @@ impl AppState {
         let msg = crate::cli::apply_voice_internal(&name, false)?;
         self.active_preset_name = name;
         self.dpdfnet_attenuation = atten;
+        let cfg = CleanMicSettings::load();
+        self.quiet_boost_enabled = cfg.quiet_voice_boost_enabled;
+        self.quiet_boost_db = cfg.quiet_voice_boost_db;
         self.set_status(msg);
         Ok(())
     }
@@ -359,6 +424,9 @@ impl AppState {
         let msg = crate::cli::apply_voice_internal("Natural Clean", false)?;
         self.active_preset_name = "Natural Clean".to_string();
         self.dpdfnet_attenuation = 45.0;
+        let cfg = CleanMicSettings::load();
+        self.quiet_boost_enabled = cfg.quiet_voice_boost_enabled;
+        self.quiet_boost_db = cfg.quiet_voice_boost_db;
         let indices = self.filtered_indices();
         for (i, &idx) in indices.iter().enumerate() {
             if self.presets[idx].name.eq_ignore_ascii_case("Natural Clean") {
@@ -372,6 +440,17 @@ impl AppState {
 
     pub fn reset_selected_preset(&mut self) -> Result<()> {
         let name = self.selected_preset().name.clone();
+        if name.eq_ignore_ascii_case("Natural Clean") {
+            self.quiet_boost_db = 0.0;
+            self.quiet_boost_enabled = false;
+            let mut cfg = CleanMicSettings::load();
+            cfg.quiet_voice_boost_enabled = false;
+            cfg.quiet_voice_boost_db = 0.0;
+            cfg.apply_dsp_params()?;
+            cfg.save()?;
+            self.set_status("Reset 'Natural Clean' quiet voice boost to OFF (+0 dB).".to_string());
+            return Ok(());
+        }
         let mut mgr = PresetManager::new()?;
         if mgr.reset_preset(&name)? {
             self.presets = mgr.all_presets().to_vec();
@@ -386,15 +465,37 @@ impl AppState {
     }
 
     pub fn save_current_tweaks(&mut self) -> Result<()> {
-        let mut mgr = PresetManager::new()?;
         let active_name = self.active_preset_name.clone();
+        if active_name.eq_ignore_ascii_case("Natural Clean") {
+            let mut cfg = CleanMicSettings::load();
+            cfg.dpdfnet_attenuation_db = self.dpdfnet_attenuation;
+            cfg.output_gain_db = self.output_gain_db;
+            cfg.quiet_voice_boost_enabled = self.quiet_boost_enabled;
+            cfg.quiet_voice_boost_db = self.quiet_boost_db;
+            cfg.save()?;
+            self.set_status(
+                "Saved Natural Clean settings (DPDFNet, Gain, Quiet Boost).".to_string(),
+            );
+            return Ok(());
+        }
+        let mut mgr = PresetManager::new()?;
         if let Some(mut preset) = mgr.find_preset(&active_name) {
             preset.dpdfnet_attenuation_db = self.dpdfnet_attenuation;
             let wet_dry = 1.0 - (self.effect_mix_pct as f32 / 100.0);
             preset.wet_dry_mix = wet_dry;
+            if let Some(cur) = self
+                .presets
+                .iter()
+                .find(|p| p.name.eq_ignore_ascii_case(&active_name))
+            {
+                preset.model_gain_db = cur.model_gain_db;
+            }
             mgr.update_preset_parameters(&preset)?;
             self.presets = mgr.all_presets().to_vec();
-            self.set_status(format!("Saved live parameters to '{}'.", active_name));
+            self.set_status(format!(
+                "Saved live parameters to '{}' (Boost: {:+.1} dB).",
+                active_name, preset.model_gain_db
+            ));
         }
         Ok(())
     }

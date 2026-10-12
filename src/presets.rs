@@ -24,7 +24,7 @@ fn default_flanger_rate() -> f32 {
 }
 
 fn default_delay_mix() -> f32 {
-    1.0
+    0.0
 }
 
 fn default_hpf() -> f32 {
@@ -47,6 +47,10 @@ fn default_preset_attenuation() -> f32 {
     45.0
 }
 
+fn default_model_gain() -> f32 {
+    2.0
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Preset {
     pub name: String,
@@ -57,6 +61,10 @@ pub struct Preset {
     // DPDFNet Neural Noise Suppression Attenuation Limit (dB) tailored per voice preset
     #[serde(default = "default_preset_attenuation")]
     pub dpdfnet_attenuation_db: f32,
+
+    // Master FX Output Gain / Model Volume Boost (dB, -12.0 to +12.0 dB, default +2.0 dB for creative models, 0.0 for Clean)
+    #[serde(default = "default_model_gain")]
+    pub model_gain_db: f32,
 
     // 1. Pitch & Formant Shifter (RubberBand Mono)
     #[serde(default)]
@@ -90,7 +98,7 @@ pub struct Preset {
 
     // 6. Echo / Reverb Delayorama (swh-plugins delayorama)
     #[serde(default = "default_delay_mix")]
-    pub delay_mix: f32, // 1.0 = 100% dry/off, <1.0 = wet
+    pub delay_mix: f32, // 0.0 = 100% dry/off, >0.0 = wet echo
     #[serde(default)]
     pub delay_time: f32, // 0.0 to 2.0 s
     #[serde(default)]
@@ -165,6 +173,7 @@ impl Default for Preset {
             description: "Clean broadcast voice with DPDFNet neural denoising, 9-band EQ, compressor & limiter".to_string(),
             category: "Natural".to_string(),
             dpdfnet_attenuation_db: 45.0,
+            model_gain_db: 0.0,
             pitch_semitones: 0.0,
             formant_preserving: false,
             ringmod_depth: 0.0,
@@ -175,7 +184,7 @@ impl Default for Preset {
             distortion_level: 0.0,
             flanger_enabled: false,
             flanger_rate: 0.5,
-            delay_mix: 1.0,
+            delay_mix: 0.0,
             delay_time: 0.0,
             delay_feedback: 0.0,
             hpf_freq: 20.0,
@@ -233,6 +242,7 @@ impl Preset {
         };
         let square_level = if self.ringmod_square > 0.01 { 1.0 } else { 0.0 };
         let sine_level = if square_level > 0.5 { 0.0 } else { 1.0 };
+        let model_gain_linear = 10.0f32.powf(self.model_gain_db / 20.0);
 
         format!(
             "{{ params = [ \
@@ -253,7 +263,8 @@ impl Preset {
                 \"eq_hpf:Freq\" {:.1}, \
                 \"eq_lpf:Freq\" {:.1}, \
                 \"eq_peak:Freq\" {:.1}, \
-                \"eq_peak:Gain\" {:.1} \
+                \"eq_peak:Gain\" {:.1}, \
+                \"limiter:Output gain (G)\" {:.4} \
             ] }}",
             self.pitch_semitones,
             formant_val,
@@ -272,7 +283,8 @@ impl Preset {
             self.hpf_freq,
             self.lpf_freq,
             self.eq_freq,
-            self.eq_gain
+            self.eq_gain,
+            model_gain_linear
         )
     }
 
@@ -321,13 +333,13 @@ impl Preset {
             ));
         }
 
-        if self.delay_mix < 0.99 {
+        if self.delay_mix > 0.01 {
             params.push((
                 "Echo / Delay".to_string(),
                 format!(
                     "{:.0}ms ({:.0}% wet, {:.0}% fb)",
                     self.delay_time * 1000.0,
-                    (1.0 - self.delay_mix) * 100.0,
+                    self.delay_mix * 100.0,
                     self.delay_feedback
                 ),
             ));
@@ -358,6 +370,13 @@ impl Preset {
             params.push((
                 "DPDFNet Attn".to_string(),
                 format!("{:.0} dB", self.dpdfnet_attenuation_db),
+            ));
+        }
+
+        if self.model_gain_db.abs() > 0.01 {
+            params.push((
+                "Model Boost".to_string(),
+                format!("{:+.1} dB", self.model_gain_db),
             ));
         }
 
@@ -398,7 +417,7 @@ impl Preset {
         if self.flanger_enabled {
             stages.push(format!("Flanger ({:.1}Hz)", self.flanger_rate));
         }
-        if self.delay_mix < 0.99 {
+        if self.delay_mix > 0.01 {
             stages.push(format!("Echo ({:.0}ms)", self.delay_time * 1000.0));
         }
         if self.hpf_freq > 25.0 || self.lpf_freq < 19000.0 {
@@ -409,6 +428,9 @@ impl Preset {
         }
         if self.eq_gain.abs() > 0.1 {
             stages.push(format!("Tone EQ ({:+.1}dB)", self.eq_gain));
+        }
+        if self.model_gain_db > 0.01 {
+            stages.push(format!("Boost ({:+.1}dB)", self.model_gain_db));
         }
         stages.push("LSP Limiter (-3dBFS)".to_string());
         stages
@@ -451,7 +473,7 @@ impl Default for PresetConfig {
 
 impl PresetConfig {
     pub fn default_factory_presets() -> Vec<Preset> {
-        vec![
+        let mut presets = vec![
             // ==================== NATURAL ====================
             Preset {
                 name: "Natural Clean".to_string(),
@@ -570,7 +592,7 @@ impl PresetConfig {
                 dpdfnet_attenuation_db: 48.0,
                 pitch_semitones: -6.0,
                 formant_preserving: false,
-                delay_mix: 0.75,
+                delay_mix: 0.15,
                 delay_time: 0.08,
                 delay_feedback: 20.0,
                 hpf_freq: 70.0,
@@ -634,7 +656,7 @@ impl PresetConfig {
                 ringmod_freq: 16.0,
                 ringmod_square: 1.0,
                 distortion_level: 0.10,
-                delay_mix: 0.80,
+                delay_mix: 0.15,
                 delay_time: 0.04,
                 delay_feedback: 15.0,
                 hpf_freq: 120.0,
@@ -732,7 +754,7 @@ impl PresetConfig {
                 category: "Radio/Space".to_string(),
                 description: "Deep cavern acoustic echo (140 ms pre-delay, 35% feedback, 5.5 kHz air damping)".to_string(),
                 dpdfnet_attenuation_db: 48.0,
-                delay_mix: 0.65,
+                delay_mix: 0.30,
                 delay_time: 0.14,
                 delay_feedback: 35.0,
                 lpf_freq: 5500.0,
@@ -743,7 +765,7 @@ impl PresetConfig {
                 category: "Radio/Space".to_string(),
                 description: "Massive public arena PA system echo (240 ms slap, 45% feedback)".to_string(),
                 dpdfnet_attenuation_db: 48.0,
-                delay_mix: 0.70,
+                delay_mix: 0.35,
                 delay_time: 0.24,
                 delay_feedback: 45.0,
                 eq_freq: 3000.0,
@@ -770,7 +792,7 @@ impl PresetConfig {
                 description: "Ethereal spectral whisper (+2.0 st, ambient feedback delay & liquid flanger)".to_string(),
                 dpdfnet_attenuation_db: 48.0,
                 pitch_semitones: 2.0,
-                delay_mix: 0.65,
+                delay_mix: 0.25,
                 delay_time: 0.18,
                 delay_feedback: 45.0,
                 flanger_enabled: true,
@@ -826,7 +848,14 @@ impl PresetConfig {
                 lpf_freq: 5000.0,
                 ..Default::default()
             },
-        ]
+        ];
+        for p in presets.iter_mut() {
+            if !p.name.eq_ignore_ascii_case("Natural Clean") && (p.model_gain_db - 0.0).abs() < 1e-4
+            {
+                p.model_gain_db = 2.0;
+            }
+        }
+        presets
     }
 }
 
@@ -998,29 +1027,15 @@ impl PresetManager {
             let data = fs::read_to_string(&path)
                 .with_context(|| format!("Failed to read {}", path.display()))?;
             if let Ok(mut parsed) = toml::from_str::<PresetConfig>(&data) {
-                // If loaded config has fewer than 20 presets, ensure all defaults are present
-                if parsed.presets.len() < 20 {
-                    let mut existing: HashSet<String> = parsed
-                        .presets
-                        .iter()
-                        .map(|p| p.name.to_lowercase())
-                        .collect();
-                    for def in PresetConfig::default_factory_presets() {
-                        if !existing.contains(&def.name.to_lowercase()) {
-                            parsed.presets.push(def.clone());
-                            existing.insert(def.name.to_lowercase());
-                        }
-                    }
-                }
+                let mut existing: HashSet<String> = parsed
+                    .presets
+                    .iter()
+                    .map(|p| p.name.to_lowercase())
+                    .collect();
                 for def in PresetConfig::default_factory_presets() {
-                    if let Some(p) = parsed
-                        .presets
-                        .iter_mut()
-                        .find(|p| p.name.eq_ignore_ascii_case(&def.name) && !p.user)
-                    {
-                        let verified = p.verified;
-                        *p = def;
-                        p.verified = verified;
+                    if !existing.contains(&def.name.to_lowercase()) {
+                        parsed.presets.push(def.clone());
+                        existing.insert(def.name.to_lowercase());
                     }
                 }
                 let verified_set = self.load_verified_set();
@@ -1054,9 +1069,9 @@ impl PresetManager {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_nanos())
             .unwrap_or(0);
-        let tmp_path = self
-            .config_dir
-            .join(format!("presets.toml.tmp.{}.{}", std::process::id(), nanos));
+        let tmp_path =
+            self.config_dir
+                .join(format!("presets.toml.tmp.{}.{}", std::process::id(), nanos));
         fs::write(&tmp_path, data)?;
         fs::rename(&tmp_path, &path)?;
         Ok(())

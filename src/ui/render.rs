@@ -315,13 +315,13 @@ fn render_left_pane(frame: &mut Frame, area: Rect, state: &AppState) {
 fn render_right_pane(frame: &mut Frame, area: Rect, state: &AppState) {
     if state.sidetone_enabled {
         let detail_height = if area.height <= 22 { 7 } else { 8 };
-        let controls_height = if area.height <= 22 { 8 } else { 10 };
+        let controls_height = if area.height <= 22 { 9 } else { 10 };
         let vertical_chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
                 Constraint::Length(detail_height),   // Preset details
-                Constraint::Min(6), // Live Spectrograph module (only when using 'v')
-                Constraint::Length(controls_height), // Live Controls (6 items)
+                Constraint::Min(5), // Live Spectrograph module (only when using 'v')
+                Constraint::Length(controls_height), // Live Controls (7 items)
             ])
             .split(area);
 
@@ -333,7 +333,7 @@ fn render_right_pane(frame: &mut Frame, area: Rect, state: &AppState) {
             .direction(Direction::Vertical)
             .constraints([
                 Constraint::Min(8),     // Preset details & Signal chain overview
-                Constraint::Length(10), // Live Controls (6 items)
+                Constraint::Length(10), // Live Controls (7 items)
             ])
             .split(area);
 
@@ -432,6 +432,17 @@ fn render_preset_details(frame: &mut Frame, area: Rect, state: &AppState) {
     // Line 4: DSP Parameters breakdown
     let nonzero = selected.nonzero_params();
     if nonzero.is_empty() {
+        let clean_param_text = if state.quiet_boost_enabled {
+            format!(
+                "Direct bypass (DPDFNet {:.0}dB) │ Quiet Voice Boost {:+.0}dB [ON] (Lowered threshold & leveling)",
+                state.dpdfnet_attenuation, state.quiet_boost_db
+            )
+        } else {
+            format!(
+                "Direct bypass — pristine clean speech (DPDFNet {:.0}dB, Quiet Boost: OFF)",
+                state.dpdfnet_attenuation
+            )
+        };
         lines.push(Line::from(vec![
             Span::styled(
                 "Parameters : ",
@@ -439,10 +450,7 @@ fn render_preset_details(frame: &mut Frame, area: Rect, state: &AppState) {
                     .fg(Color::White)
                     .add_modifier(Modifier::BOLD),
             ),
-            Span::styled(
-                "Direct bypass — pristine clean speech (DPDFNet 45dB)",
-                Style::default().fg(Color::Green),
-            ),
+            Span::styled(clean_param_text, Style::default().fg(Color::Green)),
         ]));
     } else {
         let mut param_strs = Vec::new();
@@ -788,13 +796,15 @@ fn render_live_controls(frame: &mut Frame, area: Rect, state: &AppState) {
         ),
     ]));
 
-    // 1: Output Gain (-24..+12 dB)
+    // 1: Quiet Voice Boost (0..10 dB) - Universal across all models
     let is_sel_1 = state.selected_control == 1;
     let mark_1 = if is_sel_1 { "> " } else { "  " };
-    let norm_gain = ((state.output_gain_db + 24.0) / 3.6)
-        .clamp(0.0, 10.0)
-        .round() as usize;
-    let bar_gain = format!("[{}{}]", "█".repeat(norm_gain), "░".repeat(10 - norm_gain));
+    let norm_boost = (state.quiet_boost_db).clamp(0.0, 10.0).round() as usize;
+    let bar_boost = format!(
+        "[{}{}]",
+        "█".repeat(norm_boost),
+        "░".repeat(10 - norm_boost)
+    );
     let line_1_style = if is_sel_1 {
         Style::default()
             .bg(Color::Blue)
@@ -803,24 +813,26 @@ fn render_live_controls(frame: &mut Frame, area: Rect, state: &AppState) {
     } else {
         Style::default().fg(Color::White)
     };
+    let boost_state = if state.quiet_boost_enabled {
+        Span::styled(
+            format!(" [{:+.0} dB] [ON] ", state.quiet_boost_db),
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        )
+    } else {
+        Span::styled(" [OFF] +0 dB ", Style::default().fg(Color::DarkGray))
+    };
     lines.push(Line::from(vec![
         Span::styled(mark_1, line_1_style),
-        Span::styled(
-            format!(
-                "[2] Output Gain         : {:>+4.1} dB {} ",
-                state.output_gain_db, bar_gain
-            ),
-            line_1_style,
-        ),
+        Span::styled("[2] Quiet Voice Boost   : ", line_1_style),
+        boost_state,
+        Span::styled(format!("{} ", bar_boost), line_1_style),
     ]));
 
-    // 2: Effect Mix (0..100% Wet)
+    // 2: Clean Output Gain (-24..+12 dB) OR Model Voice Boost (-12..+12 dB, default +2.0 dB)
     let is_sel_2 = state.selected_control == 2;
     let mark_2 = if is_sel_2 { "> " } else { "  " };
-    let norm_mix = (state.effect_mix_pct as f32 / 10.0)
-        .clamp(0.0, 10.0)
-        .round() as usize;
-    let bar_mix = format!("[{}{}]", "█".repeat(norm_mix), "░".repeat(10 - norm_mix));
     let line_2_style = if is_sel_2 {
         Style::default()
             .bg(Color::Blue)
@@ -829,30 +841,50 @@ fn render_live_controls(frame: &mut Frame, area: Rect, state: &AppState) {
     } else {
         Style::default().fg(Color::White)
     };
-    lines.push(Line::from(vec![
-        Span::styled(mark_2, line_2_style),
-        Span::styled(
-            format!(
-                "[3] Effect Wet Mix      : {:>3}%     {} ",
-                state.effect_mix_pct, bar_mix
-            ),
-            line_2_style,
-        ),
-    ]));
 
-    // 3: Sidetone (On/Off)
+    let is_active_clean = state
+        .active_preset_name
+        .eq_ignore_ascii_case("Natural Clean");
+
+    if is_active_clean {
+        let norm_gain = ((state.output_gain_db + 24.0) / 3.6)
+            .clamp(0.0, 10.0)
+            .round() as usize;
+        let bar_gain = format!("[{}{}]", "█".repeat(norm_gain), "░".repeat(10 - norm_gain));
+        lines.push(Line::from(vec![
+            Span::styled(mark_2, line_2_style),
+            Span::styled(
+                format!(
+                    "[3] Clean Output Gain   : {:>+4.1} dB {} ",
+                    state.output_gain_db, bar_gain
+                ),
+                line_2_style,
+            ),
+        ]));
+    } else {
+        let active_model_gain = state
+            .presets
+            .iter()
+            .find(|p| p.name.eq_ignore_ascii_case(&state.active_preset_name))
+            .map(|p| p.model_gain_db)
+            .unwrap_or(2.0);
+        let norm_gain = ((active_model_gain + 12.0) / 2.4).clamp(0.0, 10.0).round() as usize;
+        let bar_gain = format!("[{}{}]", "█".repeat(norm_gain), "░".repeat(10 - norm_gain));
+        lines.push(Line::from(vec![
+            Span::styled(mark_2, line_2_style),
+            Span::styled(
+                format!(
+                    "[3] Model Voice Boost   : {:>+4.1} dB {} ",
+                    active_model_gain, bar_gain
+                ),
+                line_2_style,
+            ),
+        ]));
+    }
+
+    // 3: Effect Wet Mix (0..100%) OR Direct Passthrough on Natural Clean
     let is_sel_3 = state.selected_control == 3;
     let mark_3 = if is_sel_3 { "> " } else { "  " };
-    let sidetone_state = if state.sidetone_enabled {
-        Span::styled(
-            "[ON]",
-            Style::default()
-                .fg(Color::Green)
-                .add_modifier(Modifier::BOLD),
-        )
-    } else {
-        Span::styled("[OFF]", Style::default().fg(Color::DarkGray))
-    };
     let line_3_style = if is_sel_3 {
         Style::default()
             .bg(Color::Blue)
@@ -861,16 +893,33 @@ fn render_live_controls(frame: &mut Frame, area: Rect, state: &AppState) {
     } else {
         Style::default().fg(Color::White)
     };
-    lines.push(Line::from(vec![
-        Span::styled(mark_3, line_3_style),
-        Span::styled("[4] Sidetone (Hear Mic) : ", line_3_style),
-        sidetone_state,
-    ]));
 
-    // 4: VU Meter (On/Off)
+    if is_active_clean {
+        lines.push(Line::from(vec![
+            Span::styled(mark_3, line_3_style),
+            Span::styled("[4] Effect Wet Mix      : [Direct Clean]", line_3_style),
+        ]));
+    } else {
+        let norm_mix = (state.effect_mix_pct as f32 / 10.0)
+            .clamp(0.0, 10.0)
+            .round() as usize;
+        let bar_mix = format!("[{}{}]", "█".repeat(norm_mix), "░".repeat(10 - norm_mix));
+        lines.push(Line::from(vec![
+            Span::styled(mark_3, line_3_style),
+            Span::styled(
+                format!(
+                    "[4] Effect Wet Mix      : {:>3}%     {} ",
+                    state.effect_mix_pct, bar_mix
+                ),
+                line_3_style,
+            ),
+        ]));
+    }
+
+    // 4: Sidetone (On/Off)
     let is_sel_4 = state.selected_control == 4;
     let mark_4 = if is_sel_4 { "> " } else { "  " };
-    let meter_state = if state.meter_enabled {
+    let sidetone_state = if state.sidetone_enabled {
         Span::styled(
             "[ON]",
             Style::default()
@@ -890,16 +939,22 @@ fn render_live_controls(frame: &mut Frame, area: Rect, state: &AppState) {
     };
     lines.push(Line::from(vec![
         Span::styled(mark_4, line_4_style),
-        Span::styled("[5] Level VU Meter      : ", line_4_style),
-        meter_state,
+        Span::styled("[5] Sidetone (Hear Mic) : ", line_4_style),
+        sidetone_state,
     ]));
 
-    // 5: Spectrograph Mode (RTA / Waterfall)
+    // 5: VU Meter (On/Off)
     let is_sel_5 = state.selected_control == 5;
     let mark_5 = if is_sel_5 { "> " } else { "  " };
-    let spec_mode_str = match state.spectrograph_mode {
-        crate::ui::app::SpectrographMode::RtaBars => "[RTA SPECTRUM]",
-        crate::ui::app::SpectrographMode::Waterfall => "[WATERFALL HEATMAP]",
+    let meter_state = if state.meter_enabled {
+        Span::styled(
+            "[ON]",
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        )
+    } else {
+        Span::styled("[OFF]", Style::default().fg(Color::DarkGray))
     };
     let line_5_style = if is_sel_5 {
         Style::default()
@@ -911,10 +966,31 @@ fn render_live_controls(frame: &mut Frame, area: Rect, state: &AppState) {
     };
     lines.push(Line::from(vec![
         Span::styled(mark_5, line_5_style),
-        Span::styled("[6] Spectrograph Mode   : ", line_5_style),
+        Span::styled("[6] Level VU Meter      : ", line_5_style),
+        meter_state,
+    ]));
+
+    // 6: Spectrograph Mode (RTA / Waterfall)
+    let is_sel_6 = state.selected_control == 6;
+    let mark_6 = if is_sel_6 { "> " } else { "  " };
+    let spec_mode_str = match state.spectrograph_mode {
+        crate::ui::app::SpectrographMode::RtaBars => "[RTA SPECTRUM]",
+        crate::ui::app::SpectrographMode::Waterfall => "[WATERFALL HEATMAP]",
+    };
+    let line_6_style = if is_sel_6 {
+        Style::default()
+            .bg(Color::Blue)
+            .fg(Color::White)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::White)
+    };
+    lines.push(Line::from(vec![
+        Span::styled(mark_6, line_6_style),
+        Span::styled("[7] Spectrograph Mode   : ", line_6_style),
         Span::styled(
             spec_mode_str,
-            if is_sel_5 {
+            if is_sel_6 {
                 Style::default()
                     .fg(Color::Yellow)
                     .add_modifier(Modifier::BOLD)
@@ -924,8 +1000,7 @@ fn render_live_controls(frame: &mut Frame, area: Rect, state: &AppState) {
         ),
     ]));
 
-    if inner.height >= 7 {
-        lines.push(Line::raw(""));
+    if inner.height >= 8 {
         lines.push(Line::from(vec![Span::styled(
             " [r] Reset preset to default │ [w] Save live tweaks",
             Style::default().fg(Color::DarkGray),
@@ -1078,7 +1153,7 @@ fn render_help_dialog(frame: &mut Frame, area: Rect, state: &AppState) {
         Line::from(vec![
             Span::styled("Tab / S-Tab    ", key_style),
             Span::styled(
-                ": Cycle live control (DPDFNet/Gain/Mix/Side/VU/Spec)",
+                ": Cycle 7 controls (DPDFNet / Quiet Boost / Gain / Wet Mix / Sidetone / VU / Spec)",
                 desc_style,
             ),
         ]),

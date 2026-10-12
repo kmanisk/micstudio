@@ -121,6 +121,11 @@ pub enum Commands {
         #[arg(short, long)]
         waterfall: bool,
     },
+    /// Manage Quiet Voice Boost / speech leveling on Natural Clean microphone
+    Boost {
+        /// Leveling boost in dB (0 to 10 dB, e.g. 4 for +4dB, or 'off'/'status')
+        amount: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -248,6 +253,7 @@ pub fn handle_cli(cli: Cli) -> Result<()> {
             }
         }
         Some(Commands::Spectrograph { waterfall }) => crate::ui::run_tui_spectrograph(waterfall),
+        Some(Commands::Boost { amount }) => handle_boost(amount),
     }
 }
 
@@ -269,12 +275,23 @@ pub fn show_status() -> Result<()> {
     );
 
     let cfg = CleanMicSettings::load();
-    println!("--- Microphone DSP Stage 1 (DPDFNet) ---");
+    println!("--- Microphone DSP Stage 1 (DPDFNet & Clean Leveling) ---");
     println!(
         "DPDFNet Attenuation     : {:.1} dB",
         cfg.dpdfnet_attenuation_db
     );
     println!("Output Gain             : {:+.1} dB", cfg.output_gain_db);
+    println!(
+        "Quiet Voice Boost       : {}",
+        if cfg.quiet_voice_boost_enabled {
+            format!(
+                "{:+.1} dB [ON] (threshold lowered, gentle leveling)",
+                cfg.quiet_voice_boost_db
+            )
+        } else {
+            "[OFF] +0 dB (pristine clean baseline)".to_string()
+        }
+    );
     println!(
         "Sidetone Monitor        : {}",
         if cfg.hear_voice { "ON" } else { "OFF" }
@@ -282,7 +299,16 @@ pub fn show_status() -> Result<()> {
 
     let mgr = PresetManager::new()?;
     println!("--- Active Preset ---");
-    println!("Active Voice Preset     : {}", mgr.active_preset_name());
+    let active_name = mgr.active_preset_name();
+    println!("Active Voice Preset     : {}", active_name);
+    if let Some(active_p) = mgr.find_preset(active_name) {
+        if !active_name.eq_ignore_ascii_case("Natural Clean") {
+            println!(
+                "Model Voice Boost       : {:+.1} dB (LSP limiter output gain)",
+                active_p.model_gain_db
+            );
+        }
+    }
     Ok(())
 }
 
@@ -390,21 +416,101 @@ fn handle_gate(action: GateAction) -> Result<()> {
 
 fn handle_gain(action: GainAction) -> Result<()> {
     let mut cfg = CleanMicSettings::load();
+    let mut mgr = PresetManager::new()?;
+    let active_name = mgr.active_preset_name().to_string();
+    let is_clean = active_name.eq_ignore_ascii_case("Natural Clean");
+
     match action {
         GainAction::Status => {
-            println!("Microphone Output Gain : {:+.1} dB", cfg.output_gain_db);
+            if is_clean {
+                println!(
+                    "Microphone Output Gain (Clean) : {:+.1} dB",
+                    cfg.output_gain_db
+                );
+            } else if let Some(p) = mgr.find_preset(&active_name) {
+                println!(
+                    "Model Voice Boost ('{}') : {:+.1} dB [Clean Mic: {:+.1} dB]",
+                    p.name, p.model_gain_db, cfg.output_gain_db
+                );
+            }
         }
         GainAction::Set { db } => {
-            if !(-24.0..=12.0).contains(&db) {
-                anyhow::bail!("Output gain must be between -24.0 and +12.0 dB");
+            if is_clean {
+                if !(-24.0..=12.0).contains(&db) {
+                    anyhow::bail!("Clean output gain must be between -24.0 and +12.0 dB");
+                }
+                cfg.output_gain_db = db;
+                cfg.apply_to_pipewire()?;
+                cfg.save()?;
+                println!("Clean microphone output gain set to {:+.1} dB.", db);
+            } else if let Some(mut p) = mgr.find_preset(&active_name) {
+                if !(-12.0..=12.0).contains(&db) {
+                    anyhow::bail!("Model volume boost must be between -12.0 and +12.0 dB");
+                }
+                p.model_gain_db = db;
+                mgr.update_preset_parameters(&p)?;
+                let _ = crate::cli::apply_voice_silent(&p.name);
+                println!(
+                    "Preset '{}' model volume boost set to {:+.1} dB.",
+                    p.name, db
+                );
             }
-            cfg.output_gain_db = db;
-            cfg.apply_to_pipewire()?;
+        }
+    }
+    Ok(())
+}
+
+fn handle_boost(amount: Option<String>) -> Result<()> {
+    let mut cfg = CleanMicSettings::load();
+    let action = amount.as_deref().unwrap_or("status").to_lowercase();
+    match action.as_str() {
+        "status" => {
+            if cfg.quiet_voice_boost_enabled {
+                println!(
+                    "Quiet Voice Boost : {:+.1} dB [ON] (Threshold lowered, soft speech leveled)",
+                    cfg.quiet_voice_boost_db
+                );
+            } else {
+                println!("Quiet Voice Boost : [OFF] +0 dB (Pristine clean baseline)");
+            }
+        }
+        "off" => {
+            cfg.quiet_voice_boost_enabled = false;
+            cfg.quiet_voice_boost_db = 0.0;
+            cfg.apply_dsp_params()?;
+            cfg.save()?;
+            println!("Quiet Voice Boost disabled [OFF].");
+        }
+        "on" => {
+            cfg.quiet_voice_boost_enabled = true;
+            if cfg.quiet_voice_boost_db < 1.0 {
+                cfg.quiet_voice_boost_db = 4.0;
+            }
+            cfg.apply_dsp_params()?;
             cfg.save()?;
             println!(
-                "Microphone output gain set to {:+.1} dB.",
-                cfg.output_gain_db
+                "Quiet Voice Boost enabled at {:+.1} dB [ON].",
+                cfg.quiet_voice_boost_db
             );
+        }
+        val => {
+            if let Ok(db) = val.parse::<f32>() {
+                let db_clamped = db.clamp(0.0, 10.0);
+                cfg.quiet_voice_boost_db = db_clamped;
+                cfg.quiet_voice_boost_enabled = db_clamped > 0.01;
+                cfg.apply_dsp_params()?;
+                cfg.save()?;
+                if cfg.quiet_voice_boost_enabled {
+                    println!("Quiet Voice Boost set to {:+.1} dB [ON].", db_clamped);
+                } else {
+                    println!("Quiet Voice Boost disabled [OFF].");
+                }
+            } else {
+                anyhow::bail!(
+                    "Invalid boost amount '{}'. Use 0 to 10 (dB), 'on', 'off', or 'status'.",
+                    val
+                );
+            }
         }
     }
     Ok(())
@@ -565,6 +671,9 @@ pub fn apply_voice_internal(preset_name: &str, verbose: bool) -> Result<String> 
     let _ = cfg.save();
 
     if is_clean {
+        // Apply quiet voice boost / speech leveling on clean mic if enabled
+        let _ = cfg.apply_dsp_params();
+
         if let Some(fx_cap_id) = get_node_id("capture.ghelper-audio-fx")? {
             let props_payload = Preset::default().build_props_payload();
             let _ = Command::new("pw-cli")
@@ -577,18 +686,26 @@ pub fn apply_voice_internal(preset_name: &str, verbose: bool) -> Result<String> 
         mgr.set_active_preset(&preset.name)?;
         let cfg = CleanMicSettings::load();
         CleanMicSettings::sync_hear_voice_with_source(cfg.hear_voice, false);
+        let quiet_info = if cfg.quiet_voice_boost_enabled {
+            format!(", Quiet Boost: {:+.0} dB", cfg.quiet_voice_boost_db)
+        } else {
+            String::new()
+        };
         if verbose {
             println!(
-                "Switched default source to clean microphone (ghelper-audio). DPDFNet: {:.0} dB",
-                preset.dpdfnet_attenuation_db
+                "Switched default source to clean microphone (ghelper-audio). DPDFNet: {:.0} dB{}",
+                preset.dpdfnet_attenuation_db, quiet_info
             );
         }
         Ok(format!(
-            "Natural Clean active (ghelper-audio, DPDFNet {:.0} dB)",
-            preset.dpdfnet_attenuation_db
+            "Natural Clean active (ghelper-audio, DPDFNet {:.0} dB{})",
+            preset.dpdfnet_attenuation_db, quiet_info
         ))
     } else {
-        // Set all 10 LADSPA stages on capture.ghelper-audio-fx atomically
+        // Apply Quiet Voice Boost (if enabled) on capture.ghelper-audio so quiet speech leveling benefits ALL models!
+        let _ = cfg.apply_dsp_params();
+
+        // Set all 10 LADSPA stages on capture.ghelper-audio-fx atomically (including model volume boost)
         if let Some(fx_cap_id) = get_node_id("capture.ghelper-audio-fx")? {
             let props_payload = preset.build_props_payload();
             let _ = Command::new("pw-cli")
@@ -603,15 +720,25 @@ pub fn apply_voice_internal(preset_name: &str, verbose: bool) -> Result<String> 
         mgr.set_active_preset(&preset.name)?;
         let cfg = CleanMicSettings::load();
         CleanMicSettings::sync_hear_voice_with_source(cfg.hear_voice, true);
+        let boost_info = if preset.model_gain_db.abs() > 0.01 {
+            format!(", Boost: {:+.1} dB", preset.model_gain_db)
+        } else {
+            String::new()
+        };
+        let quiet_info = if cfg.quiet_voice_boost_enabled {
+            format!(", Quiet Boost: {:+.0} dB", cfg.quiet_voice_boost_db)
+        } else {
+            String::new()
+        };
         if verbose {
             println!(
-                "Applied preset '{}' to voice FX engine (ghelper-audio-fx). DPDFNet: {:.0} dB",
-                preset.name, preset.dpdfnet_attenuation_db
+                "Applied preset '{}' to voice FX engine (ghelper-audio-fx). DPDFNet: {:.0} dB{}{}",
+                preset.name, preset.dpdfnet_attenuation_db, boost_info, quiet_info
             );
         }
         Ok(format!(
-            "Preset '{}' active (ghelper-audio-fx, DPDFNet {:.0} dB)",
-            preset.name, preset.dpdfnet_attenuation_db
+            "Preset '{}' active (ghelper-audio-fx, DPDFNet {:.0} dB{}{})",
+            preset.name, preset.dpdfnet_attenuation_db, boost_info, quiet_info
         ))
     }
 }

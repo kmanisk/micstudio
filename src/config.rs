@@ -28,6 +28,10 @@ pub struct CleanMicSettings {
     #[serde(default)]
     pub output_gain_db: f32, // -24.0 to +12.0 (dB)
     #[serde(default)]
+    pub quiet_voice_boost_enabled: bool,
+    #[serde(default)]
+    pub quiet_voice_boost_db: f32, // 0.0 to +10.0 (dB)
+    #[serde(default)]
     pub hear_voice: bool, // Sidetone / live mic monitor
     #[serde(default)]
     pub meter_enabled: bool, // Live level meter in TUI
@@ -59,6 +63,8 @@ impl Default for CleanMicSettings {
             schema_version: SETTINGS_VERSION,
             dpdfnet_attenuation_db: 100.0,
             output_gain_db: 0.0,
+            quiet_voice_boost_enabled: false,
+            quiet_voice_boost_db: 0.0,
             hear_voice: false,
             meter_enabled: false,
             rnnoise_enabled: true,
@@ -105,6 +111,7 @@ impl CleanMicSettings {
         self.schema_version = SETTINGS_VERSION;
         self.dpdfnet_attenuation_db = self.dpdfnet_attenuation_db.clamp(0.0, 100.0);
         self.output_gain_db = self.output_gain_db.clamp(-24.0, 12.0);
+        self.quiet_voice_boost_db = self.quiet_voice_boost_db.clamp(0.0, 10.0);
     }
 
     pub fn save(&self) -> Result<()> {
@@ -119,7 +126,7 @@ impl CleanMicSettings {
         Ok(())
     }
 
-    /// Live apply: update DPDFNet attenuation and output gain directly via PipeWire pw-cli Props
+    /// Live apply: update DPDFNet attenuation, quiet speech leveling, and output gain directly via PipeWire pw-cli Props
     pub fn apply_dsp_params(&self) -> Result<()> {
         let capture_id = match get_node_id("capture.ghelper-audio")? {
             Some(id) => id,
@@ -129,8 +136,45 @@ impl CleanMicSettings {
         let atten = self.dpdfnet_attenuation_db.clamp(0.0, 100.0);
         let linear_gain = 10.0f32.powf(self.output_gain_db / 20.0);
 
+        let (thresh_linear, makeup_linear) =
+            if self.quiet_voice_boost_enabled && self.quiet_voice_boost_db > 0.01 {
+                let boost = self.quiet_voice_boost_db.clamp(0.0, 10.0);
+                let thresh_db = (-12.0 - (boost * 1.5)).clamp(-24.0, -12.0);
+                let makeup_db = (3.0 + boost).clamp(3.0, 12.0);
+                (
+                    10.0f32.powf(thresh_db / 20.0),
+                    10.0f32.powf(makeup_db / 20.0),
+                )
+            } else {
+                // Baseline factory values from 40-mic.conf (-12 dBFS threshold, +3 dB makeup)
+                (0.251189, 1.412538)
+            };
+
         let props_payload = format!(
-            "{{ params = [ \"dpdfnet:Attenuation Limit (dB)\" {:.1}, \"compressor:Output gain (G)\" {:.4} ] }}",
+            "{{ params = [ \"dpdfnet:Attenuation Limit (dB)\" {:.1}, \"compressor:Output gain (G)\" {:.4}, \"compressor:Attack threshold (G)\" {:.6}, \"compressor:Makeup gain (G)\" {:.6} ] }}",
+            atten, linear_gain, thresh_linear, makeup_linear
+        );
+
+        let _ = Command::new("pw-cli")
+            .args(["s", &capture_id, "Props", &props_payload])
+            .output();
+
+        Ok(())
+    }
+
+    /// Reset capture.ghelper-audio compressor to factory baseline (-12 dBFS threshold, +3 dB makeup).
+    /// Used when applying creative FX presets to guarantee creative FX never inherit extra quiet boost or compression.
+    pub fn reset_clean_compressor_baseline() -> Result<()> {
+        let capture_id = match get_node_id("capture.ghelper-audio")? {
+            Some(id) => id,
+            None => return Ok(()),
+        };
+        let cfg = Self::load();
+        let atten = cfg.dpdfnet_attenuation_db.clamp(0.0, 100.0);
+        let linear_gain = 10.0f32.powf(cfg.output_gain_db / 20.0);
+
+        let props_payload = format!(
+            "{{ params = [ \"dpdfnet:Attenuation Limit (dB)\" {:.1}, \"compressor:Output gain (G)\" {:.4}, \"compressor:Attack threshold (G)\" 0.251189, \"compressor:Makeup gain (G)\" 1.412538 ] }}",
             atten, linear_gain
         );
 
@@ -201,7 +245,7 @@ pub fn is_voice_fx_active() -> bool {
 }
 
 fn disconnect_monitor_links(source_port: &str) {
-    if let Ok(out) = Command::new("pw-link").args(["-I", "-l"]).output() {
+    if let Ok(out) = Command::new("pw-link").arg("-l").output() {
         let text = String::from_utf8_lossy(&out.stdout);
         let mut cur_port = String::new();
         for line in text.lines() {
@@ -221,12 +265,9 @@ fn disconnect_monitor_links(source_port: &str) {
                         }
                     }
                 }
-            } else {
-                // Header line: port name
-                let parts: Vec<&str> = trimmed.split_whitespace().collect();
-                if parts.len() >= 2 {
-                    cur_port = parts[1].to_string();
-                }
+            } else if !line.starts_with(' ') {
+                // Header line: port name (unindented)
+                cur_port = trimmed.to_string();
             }
         }
     }
