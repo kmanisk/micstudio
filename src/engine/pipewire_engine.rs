@@ -38,6 +38,9 @@ pub fn run_engine(initial_preset: Preset, stop_signal: Arc<AtomicBool>) -> Resul
 
     // Ring buffer capacity: 8192 samples (~170 ms safety headroom)
     let ring_buffer = Arc::new(SpscRingBuffer::new(8192));
+    for _ in 0..480 {
+        ring_buffer.push(0.0);
+    }
     let ring_capture = ring_buffer.clone();
     let ring_playback = ring_buffer.clone();
 
@@ -111,61 +114,76 @@ pub fn run_engine(initial_preset: Preset, stop_signal: Arc<AtomicBool>) -> Resul
         }
     });
 
-    // 1. Setup Virtual Source Stream (`ghelper-audio-fx`)
+    // 1. Setup Virtual Source Stream (`ghelper-audio`)
     let source_props = properties! {
         *pw::keys::MEDIA_TYPE => "Audio",
         *pw::keys::MEDIA_CATEGORY => "Playback",
-        *pw::keys::MEDIA_ROLE => "DSP",
+        *pw::keys::MEDIA_ROLE => "Communication",
         *pw::keys::MEDIA_CLASS => "Audio/Source",
-        *pw::keys::NODE_NAME => "ghelper-audio-fx",
-        *pw::keys::NODE_DESCRIPTION => "MicStudio Voice FX",
+        *pw::keys::NODE_NAME => "ghelper-audio",
+        *pw::keys::NODE_DESCRIPTION => "MicStudio Clean",
+        *pw::keys::NODE_NICK => "MicStudio Clean",
+        *pw::keys::NODE_VIRTUAL => "true",
         *pw::keys::AUDIO_CHANNELS => "1",
+        "audio.position" => "MONO",
         "audio.rate" => "48000",
-        *pw::keys::PRIORITY_SESSION => "2500",
+        *pw::keys::PRIORITY_SESSION => "1000",
+        "node.latency" => "480/48000",
     };
 
-    let source_stream = pw::stream::StreamBox::new(&core, "ghelper-audio-fx", source_props)
+    let source_stream = pw::stream::StreamBox::new(&core, "ghelper-audio", source_props)
         .context("Failed to create PipeWire virtual source stream")?;
 
     let _source_listener = source_stream
         .add_local_listener::<()>()
         .process(move |stream, _| {
             if let Some(mut buffer) = stream.dequeue_buffer() {
+                let req = buffer.requested() as usize;
                 let datas = buffer.datas_mut();
                 let stride = std::mem::size_of::<f32>();
-                let slice_len = if let Some(slice) = datas[0].data() {
-                    let n_frames = slice.len() / stride;
+                let mut written_bytes = 0;
+                if let Some(slice) = datas[0].data() {
+                    let n_avail = slice.len() / stride;
+                    let n_frames = if req > 0 && req <= n_avail {
+                        req
+                    } else if n_avail > 0 {
+                        480.min(n_avail)
+                    } else {
+                        0
+                    };
                     for i in 0..n_frames {
                         let val = ring_playback.pop().unwrap_or(0.0);
                         let start = i * stride;
                         let end = start + stride;
                         slice[start..end].copy_from_slice(&val.to_ne_bytes());
                     }
-                    slice.len()
-                } else {
-                    0
-                };
+                    written_bytes = n_frames * stride;
+                }
                 let chunk = datas[0].chunk_mut();
                 *chunk.offset_mut() = 0;
                 *chunk.stride_mut() = stride as _;
-                *chunk.size_mut() = slice_len as _;
+                *chunk.size_mut() = written_bytes as _;
             }
         })
         .register()?;
 
-    // 2. Setup Microphone Capture Stream (`micstudio-capture`)
+    // 2. Setup Microphone Capture Stream (`capture.ghelper-audio`)
     let capture_props = properties! {
         *pw::keys::MEDIA_TYPE => "Audio",
         *pw::keys::MEDIA_CATEGORY => "Capture",
-        *pw::keys::MEDIA_ROLE => "DSP",
-        *pw::keys::NODE_NAME => "micstudio-capture",
+        *pw::keys::MEDIA_ROLE => "Communication",
+        *pw::keys::NODE_NAME => "capture.ghelper-audio",
         *pw::keys::NODE_DESCRIPTION => "MicStudio Microphone Capture",
         *pw::keys::AUDIO_CHANNELS => "1",
+        "audio.position" => "MONO",
         "audio.rate" => "48000",
-        "target.object" => "ghelper-audio",
+        "target.object" => "alsa_input.pci-0000_00_1f.3.analog-stereo",
+        "node.dont-reconnect" => "true",
+        "node.latency" => "480/48000",
+        "node.autoconnect" => "true",
     };
 
-    let capture_stream = pw::stream::StreamBox::new(&core, "micstudio-capture", capture_props)
+    let capture_stream = pw::stream::StreamBox::new(&core, "capture.ghelper-audio", capture_props)
         .context("Failed to create PipeWire mic capture stream")?;
 
     // Create DSP Pipeline
@@ -184,23 +202,31 @@ pub fn run_engine(initial_preset: Preset, stop_signal: Arc<AtomicBool>) -> Resul
 
             if let Some(mut buffer) = stream.dequeue_buffer() {
                 let datas = buffer.datas_mut();
+                let stride = std::mem::size_of::<f32>();
+                let offset = datas[0].chunk().offset() as usize;
+                let size = datas[0].chunk().size() as usize;
                 if let Some(slice) = datas[0].data() {
-                    let stride = std::mem::size_of::<f32>();
-                    let n_frames = slice.len() / stride;
-                    for i in 0..n_frames {
-                        let start = i * stride;
-                        let end = start + stride;
-                        let bytes: [u8; 4] = slice[start..end].try_into().unwrap_or([0; 4]);
-                        let in_sample = f32::from_ne_bytes(bytes);
+                    if size > 0 {
+                        let valid_end = (offset + size).min(slice.len());
+                        if valid_end > offset {
+                            let valid_slice = &slice[offset..valid_end];
+                            let n_frames = valid_slice.len() / stride;
+                            for i in 0..n_frames {
+                                let start = i * stride;
+                                let end = start + stride;
+                                let bytes: [u8; 4] = valid_slice[start..end].try_into().unwrap_or([0; 4]);
+                                let in_sample = f32::from_ne_bytes(bytes);
 
-                        let out_sample = pipeline.process_sample(in_sample);
-                        ring_capture.push(out_sample);
-                    }
+                                let out_sample = pipeline.process_sample(in_sample);
+                                ring_capture.push(out_sample);
+                            }
 
-                    telemetry_counter += n_frames;
-                    if telemetry_counter >= 2400 { // ~50ms
-                        let _ = telemetry_tx.try_send(pipeline.get_telemetry());
-                        telemetry_counter = 0;
+                            telemetry_counter += n_frames;
+                            if telemetry_counter >= 2400 { // ~50ms
+                                let _ = telemetry_tx.try_send(pipeline.get_telemetry());
+                                telemetry_counter = 0;
+                            }
+                        }
                     }
                 }
             }
@@ -231,16 +257,17 @@ pub fn run_engine(initial_preset: Preset, stop_signal: Arc<AtomicBool>) -> Resul
     let mut params_source = [Pod::from_bytes(&format_pod).unwrap()];
     let mut params_capture = [Pod::from_bytes(&format_pod).unwrap()];
 
-    // Connect streams
+    // Connect streams:
+    // source_stream must NOT autoconnect to audio sinks (speakers)
     source_stream.connect(
         libspa::utils::Direction::Output,
         None,
-        pw::stream::StreamFlags::AUTOCONNECT
-            | pw::stream::StreamFlags::MAP_BUFFERS
+        pw::stream::StreamFlags::MAP_BUFFERS
             | pw::stream::StreamFlags::RT_PROCESS,
         &mut params_source,
     )?;
 
+    // capture_stream autoconnects to target.object (hardware mic)
     capture_stream.connect(
         libspa::utils::Direction::Input,
         None,

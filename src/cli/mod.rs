@@ -1,8 +1,8 @@
 //! CLI Subcommands implementation.
 
 use crate::config::CleanMicSettings;
-use crate::ipc::{is_engine_running, send_command, IpcRequest, IpcResponse};
-use crate::presets::PresetManager;
+use crate::ipc::{is_engine_running, send_command, IpcRequest};
+use crate::presets::{Preset, PresetManager};
 use crate::speaker::{SpeakerDsp, SpeakerVoicing};
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
@@ -65,10 +65,58 @@ pub enum Commands {
     },
     /// Run diagnostic checks on the microphone and PipeWire audio stack
     Doctor,
-    /// Internal: Run audio engine headlessly in the background
-    #[command(hide = true)]
-    Daemon {
+    /// Offline Audio Lab: Render WAV file through MicStudio DSP pipeline
+    Render {
+        /// Input WAV file path
+        input: std::path::PathBuf,
+        /// Preset name to apply (e.g. "Natural Clean", "Deep Voice", "Darth Vader")
+        #[arg(short, long, default_value = "Natural Clean")]
         preset: String,
+        /// Output WAV file path
+        #[arg(short, long)]
+        output: std::path::PathBuf,
+        /// Override RNNoise suppression enabled (true/false)
+        #[arg(long)]
+        denoise: Option<bool>,
+        /// Override suppression blend (0.0 to 1.0)
+        #[arg(long)]
+        blend: Option<f32>,
+        /// Override gate enabled (true/false)
+        #[arg(long)]
+        gate: Option<bool>,
+        /// Bypass cleanup stage (HPF, RNNoise, EQ, Compressor)
+        #[arg(long)]
+        bypass_cleanup: bool,
+        /// Bypass voice transformation FX stage
+        #[arg(long)]
+        bypass_fx: bool,
+        /// Raw passthrough reference
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Verify: Assert live PipeWire microphone stream matches offline renderer within tolerances
+    Verify {
+        /// Optional preset name to verify (verifies all 13 presets if omitted)
+        #[arg(short, long)]
+        preset: Option<String>,
+        /// Optional input WAV file path
+        #[arg(short, long)]
+        input: Option<std::path::PathBuf>,
+        /// Verify real hardware mic live path through ghelper-audio
+        #[arg(long)]
+        hardware: bool,
+        /// Live real-mic interactive verification test (prompts user to speak)
+        #[arg(long)]
+        live: bool,
+        /// Duration in seconds for hardware mic test (default: 5s)
+        #[arg(long, default_value = "5")]
+        duration: u32,
+    },
+    /// Live Real-Time Audio Spectrograph and Spectrum Analyzer
+    Spectrograph {
+        /// Start in full-screen waterfall spectrogram mode
+        #[arg(short, long)]
+        waterfall: bool,
     },
 }
 
@@ -154,7 +202,37 @@ pub fn handle_cli(cli: Cli) -> Result<()> {
         Some(Commands::Speaker { action }) | Some(Commands::Dolby { action }) => handle_speaker(action),
         Some(Commands::Hear { state }) => handle_hear(state),
         Some(Commands::Doctor) => run_doctor(),
-        Some(Commands::Daemon { preset }) => run_daemon(&preset),
+        Some(Commands::Render {
+            input,
+            preset,
+            output,
+            denoise,
+            blend,
+            gate,
+            bypass_cleanup,
+            bypass_fx,
+            raw,
+        }) => handle_render(
+            input,
+            &preset,
+            output,
+            denoise,
+            blend,
+            gate,
+            bypass_cleanup,
+            bypass_fx,
+            raw,
+        ),
+        Some(Commands::Verify { preset, input, hardware, live, duration }) => {
+            if live || hardware {
+                run_live_verify(preset.as_deref(), duration)
+            } else {
+                run_verify(preset.as_deref(), input.as_deref())
+            }
+        }
+        Some(Commands::Spectrograph { waterfall }) => {
+            crate::ui::run_tui_spectrograph(waterfall)
+        }
     }
 }
 
@@ -164,39 +242,20 @@ pub fn show_status() -> Result<()> {
     println!("Default PipeWire Source : {}", def_source);
 
     let clean_node = get_node_id("ghelper-audio")?;
-    println!("Native Clean Mic Node   : {} (ghelper-audio)", clean_node.unwrap_or_else(|| "Not Found".to_string()));
+    println!("Clean Node (DPDFNet)    : {} (ghelper-audio)", clean_node.unwrap_or_else(|| "Not Found".to_string()));
 
     let fx_node = get_node_id("ghelper-audio-fx")?;
-    println!("Voice FX Mic Node       : {} (ghelper-audio-fx)", fx_node.unwrap_or_else(|| "Not Active".to_string()));
+    println!("Voice FX Node           : {} (ghelper-audio-fx)", fx_node.unwrap_or_else(|| "Not Found".to_string()));
 
-    // Clean Mic Settings
     let cfg = CleanMicSettings::load();
-    println!("--- Clean Microphone Processing (ghelper-audio) ---");
-    println!("RNNoise Suppression     : {}", if cfg.rnnoise_enabled { format!("ON (Blend: {:.0}%)", cfg.denoise_blend) } else { "BYPASSED".to_string() });
-    println!("Noise Gate              : {}", if cfg.gate_enabled { format!("ON (Aggro: {:.0}%, Atten: {:.0} dB, Hangover: {} ms)", cfg.gate_aggressiveness, cfg.silence_attenuation, cfg.hangover_ms) } else { "OFF".to_string() });
+    println!("--- Microphone DSP Stage 1 (DPDFNet) ---");
+    println!("DPDFNet Attenuation     : {:.1} dB", cfg.dpdfnet_attenuation_db);
     println!("Output Gain             : {:+.1} dB", cfg.output_gain_db);
+    println!("Sidetone Monitor        : {}", if cfg.hear_voice { "ON" } else { "OFF" });
 
-    // Speaker DSP Settings
-    if let Ok((voicing, enabled, route)) = SpeakerDsp::get_status() {
-        println!("--- ASUS TUF DAX3 / Dolby Atmos Speaker DSP ---");
-        println!("Speaker DSP State       : {}", if enabled { format!("ACTIVE ({})", voicing.id_str()) } else { "BYPASSED (Flat)".to_string() });
-        println!("Physical Audio Route    : {}", route);
-    }
-
-    println!("--- Voice FX Engine ---");
-    if is_engine_running() {
-        if let Ok(IpcResponse::Status { active_preset, telemetry }) = send_command(&IpcRequest::GetStatus) {
-            println!("On-Demand FX Engine     : ACTIVE");
-            println!("Active Preset           : {}", active_preset);
-            println!("Input Level             : {:.1} dB", telemetry.input_rms_db);
-            println!("Output Level            : {:.1} dB (Peak: {:.2})", telemetry.output_rms_db, telemetry.peak_level);
-            println!("VAD Voice Probability   : {:.0}%", telemetry.vad_probability * 100.0);
-        } else {
-            println!("On-Demand FX Engine     : RUNNING (Socket connected)");
-        }
-    } else {
-        println!("On-Demand FX Engine     : INACTIVE (Zero CPU / RAM)");
-    }
+    let mgr = PresetManager::new()?;
+    println!("--- Active Preset ---");
+    println!("Active Voice Preset     : {}", mgr.active_preset_name());
     Ok(())
 }
 
@@ -381,33 +440,7 @@ pub fn list_presets() -> Result<()> {
 }
 
 pub fn set_clean_internal(verbose: bool) -> Result<String> {
-    if is_engine_running() {
-        let _ = send_command(&IpcRequest::StopEngine);
-    }
-    let mut msg = String::new();
-    if let Some(id) = get_node_id("ghelper-audio")? {
-        Command::new("wpctl")
-            .args(["set-default", &id])
-            .output()
-            .context("Failed to run wpctl set-default")?;
-        msg = format!("Clean Mic (ghelper-audio) [Node ID: {}]", id);
-        if verbose {
-            println!("Switched default source to Native Clean Mic (ghelper-audio) [Node ID: {}]", id);
-            println!("Voice FX engine stopped (Zero idle resources).");
-        }
-
-        // Clean up any stale recording links from voice FX mic (ghelper-audio-fx)
-        disconnect_recording_links_from("ghelper-audio-fx:capture_MONO");
-
-        // Sync hear voice monitor back to clean mic if active
-        let cfg = CleanMicSettings::load();
-        if cfg.hear_voice {
-            CleanMicSettings::sync_hear_voice_with_source(true, false);
-        }
-    } else if verbose {
-        eprintln!("Warning: ghelper-audio node not found in PipeWire graph.");
-    }
-    Ok(msg)
+    apply_voice_internal("Natural Clean", verbose)
 }
 
 pub fn set_clean() -> Result<()> {
@@ -420,99 +453,67 @@ pub fn set_clean_silent() -> Result<String> {
 }
 
 pub fn apply_voice_internal(preset_name: &str, verbose: bool) -> Result<String> {
-    if preset_name.eq_ignore_ascii_case("Natural Clean") || preset_name.eq_ignore_ascii_case("clean") || preset_name.eq_ignore_ascii_case("off") {
-        return set_clean_internal(verbose);
-    }
-
     let mut mgr = PresetManager::new()?;
-    let preset = mgr.find_preset(preset_name)
-        .with_context(|| format!("Preset '{}' not found. Run 'micstudio list' to view available presets.", preset_name))?;
-
-    let mut status_msg = String::new();
-    if is_engine_running() {
-        match send_command(&IpcRequest::ApplyPreset(preset.clone()))? {
-            IpcResponse::Success => {
-                mgr.set_active_preset(&preset.name)?;
-                status_msg = format!("Preset '{}' active", preset.name);
-                if verbose {
-                    println!("Applied preset '{}' to active engine.", preset.name);
-                }
-            }
-            IpcResponse::Error(e) => {
-                if verbose {
-                    eprintln!("Engine error: {}", e);
-                }
-            }
-            _ => {}
-        }
+    let effective_name = if preset_name.eq_ignore_ascii_case("clean") || preset_name.eq_ignore_ascii_case("off") {
+        "Natural Clean"
     } else {
-        // Start engine daemon in background
+        preset_name
+    };
+
+    let preset = mgr.find_preset(effective_name)
+        .with_context(|| format!("Preset '{}' not found. Run 'micstudio list' to view available presets.", effective_name))?;
+
+    let is_clean = preset.name.eq_ignore_ascii_case("Natural Clean");
+
+    // Dynamically update DPDFNet attenuation on capture.ghelper-audio tailored for this preset
+    if let Some(clean_cap_id) = get_node_id("capture.ghelper-audio")? {
+        let atten = preset.dpdfnet_attenuation_db;
+        let props = format!("{{ params = [ \"dpdfnet:Attenuation Limit (dB)\" {:.1} ] }}", atten);
+        let _ = Command::new("pw-cli")
+            .args(["s", &clean_cap_id, "Props", &props])
+            .output();
+    }
+    let mut cfg = CleanMicSettings::load();
+    cfg.dpdfnet_attenuation_db = preset.dpdfnet_attenuation_db;
+    let _ = cfg.save();
+
+    if is_clean {
+        if let Some(fx_cap_id) = get_node_id("capture.ghelper-audio-fx")? {
+            let props_payload = Preset::default().build_props_payload();
+            let _ = Command::new("pw-cli")
+                .args(["s", &fx_cap_id, "Props", &props_payload])
+                .output();
+        }
+        if let Some(id) = get_node_id("ghelper-audio")? {
+            let _ = Command::new("wpctl").args(["set-default", &id]).output();
+        }
         mgr.set_active_preset(&preset.name)?;
-        let exe = std::env::current_exe()?;
-        Command::new(exe)
-            .args(["daemon", &preset.name])
-            .spawn()
-            .context("Failed to spawn micstudio background engine")?;
-
-        // Wait up to 1 second for ghelper-audio-fx to appear
-        for _ in 0..20 {
-            std::thread::sleep(std::time::Duration::from_millis(50));
-            if let Ok(Some(_)) = get_node_id("ghelper-audio-fx") {
-                break;
-            }
-        }
-        status_msg = format!("Voice FX engine active with preset '{}'", preset.name);
-        if verbose {
-            println!("Started Voice FX engine with preset '{}'.", preset.name);
-        }
-    }
-
-    // Set default source to ghelper-audio-fx
-    if let Some(id) = get_node_id("ghelper-audio-fx")? {
-        Command::new("wpctl")
-            .args(["set-default", &id])
-            .output()
-            .ok();
-        if verbose {
-            println!("Default Source set to Voice FX (ghelper-audio-fx) [Node ID: {}]", id);
-        }
-
-        // Clean up any stale recording links from clean mic (ghelper-audio) so apps don't get double input
-        disconnect_recording_links_from("ghelper-audio:capture_MONO");
-
-        // Sync hear voice monitor if enabled so sidetone monitors the FX source
         let cfg = CleanMicSettings::load();
-        if cfg.hear_voice {
-            CleanMicSettings::sync_hear_voice_with_source(true, true);
+        CleanMicSettings::sync_hear_voice_with_source(cfg.hear_voice, false);
+        if verbose {
+            println!("Switched default source to clean microphone (ghelper-audio). DPDFNet: {:.0} dB", preset.dpdfnet_attenuation_db);
         }
-    }
-    Ok(status_msg)
-}
+        Ok(format!("Natural Clean active (ghelper-audio, DPDFNet {:.0} dB)", preset.dpdfnet_attenuation_db))
+    } else {
+        // Set all 10 LADSPA stages on capture.ghelper-audio-fx atomically
+        if let Some(fx_cap_id) = get_node_id("capture.ghelper-audio-fx")? {
+            let props_payload = preset.build_props_payload();
+            let _ = Command::new("pw-cli")
+                .args(["s", &fx_cap_id, "Props", &props_payload])
+                .output();
+        }
 
-fn disconnect_recording_links_from(source_port: &str) {
-    if let Ok(out) = Command::new("pw-link").args(["-I", "-l"]).output() {
-        let text = String::from_utf8_lossy(&out.stdout);
-        let mut cur_port = String::new();
-        for line in text.lines() {
-            let trimmed = line.trim();
-            if trimmed.is_empty() { continue; }
-            if line.starts_with(' ') && line.contains("|->") {
-                if cur_port == source_port {
-                    if let Some(target) = line.split("|->").nth(1) {
-                        let target_clean = target.trim();
-                        // Disconnect if target is an app capture port (e.g. input_MONO, input_FL)
-                        if target_clean.contains("input_") {
-                            let _ = Command::new("pw-link").args(["-d", source_port, target_clean]).output();
-                        }
-                    }
-                }
-            } else {
-                let parts: Vec<&str> = trimmed.split_whitespace().collect();
-                if parts.len() >= 2 {
-                    cur_port = parts[1].to_string();
-                }
-            }
+        // Set default source to ghelper-audio-fx
+        if let Some(id) = get_node_id("ghelper-audio-fx")? {
+            let _ = Command::new("wpctl").args(["set-default", &id]).output();
         }
+        mgr.set_active_preset(&preset.name)?;
+        let cfg = CleanMicSettings::load();
+        CleanMicSettings::sync_hear_voice_with_source(cfg.hear_voice, true);
+        if verbose {
+            println!("Applied preset '{}' to voice FX engine (ghelper-audio-fx). DPDFNet: {:.0} dB", preset.name, preset.dpdfnet_attenuation_db);
+        }
+        Ok(format!("Preset '{}' active (ghelper-audio-fx, DPDFNet {:.0} dB)", preset.name, preset.dpdfnet_attenuation_db))
     }
 }
 
@@ -547,13 +548,6 @@ fn delete_preset(name: &str) -> Result<()> {
     Ok(())
 }
 
-pub fn run_daemon(preset_name: &str) -> Result<()> {
-    let mgr = PresetManager::new()?;
-    let preset = mgr.find_preset(preset_name).unwrap_or_default();
-    let stop_signal = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-    crate::engine::pipewire_engine::run_engine(preset, stop_signal)
-}
-
 pub fn run_doctor() -> Result<()> {
     println!("========================================================");
     println!("       MicStudio Audio Stack & Hardware Doctor          ");
@@ -568,26 +562,17 @@ pub fn run_doctor() -> Result<()> {
         println!("[✗ FAIL] Raw ALC256 mic node not found");
     }
 
-    // 2. Clean Mic Pipeline Check
-    print!(":: 2. Clean Broadcast Mic (ghelper-audio): ");
+    // 2. Unified Mic Pipeline Check
+    print!(":: 2. Unified DSP Mic (ghelper-audio): ");
     let clean = get_node_id("ghelper-audio")?;
     if let Some(id) = clean {
         println!("[✓ PASS] Node ID {} (Active, High Priority)", id);
     } else {
-        println!("[✗ FAIL] Clean mic node missing (Check 40-mic.conf)");
+        println!("[✗ FAIL] ghelper-audio node missing (Run 'systemctl --user start micstudio')");
     }
 
-    // 3. Fallback Pitch FX Mic Check
-    print!(":: 3. Static Pitch FX (ghelper-audio-fx): ");
-    let fx = get_node_id("ghelper-audio-fx")?;
-    if let Some(id) = fx {
-        println!("[✓ PASS] Node ID {}", id);
-    } else {
-        println!("[– IDLE] Ready for on-demand activation");
-    }
-
-    // 4. Default Source
-    print!(":: 4. Default Recording Source: ");
+    // 3. Default Source
+    print!(":: 3. Default Recording Source: ");
     let def = get_default_source()?;
     println!("{}", def);
 
@@ -654,3 +639,476 @@ fn get_default_source() -> Result<String> {
     }
     Ok("MicStudio Clean".to_string())
 }
+
+fn handle_render(
+    input: std::path::PathBuf,
+    preset_name: &str,
+    output: std::path::PathBuf,
+    denoise: Option<bool>,
+    blend: Option<f32>,
+    gate: Option<bool>,
+    bypass_cleanup: bool,
+    bypass_fx: bool,
+    raw: bool,
+) -> Result<()> {
+    let mgr = PresetManager::new()?;
+    let preset = mgr.find_preset(preset_name)
+        .with_context(|| format!("Preset '{}' not found. Run 'mic list' to see available presets.", preset_name))?;
+
+    let options = crate::renderer::RenderOptions {
+        input_path: input,
+        output_path: output,
+        preset,
+        cleanup_enabled: !bypass_cleanup,
+        fx_enabled: !bypass_fx,
+        denoise_override: denoise,
+        denoise_blend_override: blend,
+        gate_override: gate,
+        hpf_override: None,
+        limiter_override: None,
+        raw_passthrough: raw,
+    };
+
+    let result = crate::renderer::render_file(&options)?;
+
+    println!("✓ Rendered: {}", result.output_file);
+    println!("  Preset       : {}", result.preset_name);
+    println!("  Input        : {} ({:.2}s, {:.1} kHz, {} ch, Peak: {:.3}, RMS: {:.1} dBFS)",
+        result.input_file, result.input_info.duration_seconds, result.input_info.sample_rate as f32 / 1000.0,
+        result.input_info.channels, result.input_info.peak_amplitude, result.input_info.rms_dbfs
+    );
+    println!("  Output       : {} ({:.2}s, 48.0 kHz 24-bit PCM mono)",
+        result.output_file, result.output_info.duration_seconds
+    );
+    println!("  Levels       : Peak: {:.3} ({:.2} dBFS), RMS: {:.1} dBFS, Clipped: {}",
+        result.output_info.peak_amplitude,
+        if result.output_info.peak_amplitude > 1e-5 { 20.0 * result.output_info.peak_amplitude.log10() } else { -96.0 },
+        result.output_info.rms_dbfs,
+        result.output_info.clipped_samples
+    );
+    println!("  Denoise      : {} (Blend: {:.0}%), Gate: {}",
+        if result.denoise_active { "ON" } else { "BYPASSED" },
+        result.denoise_blend * 100.0,
+        if result.gate_active { "ON" } else { "OFF" }
+    );
+    Ok(())
+}
+
+pub fn run_verify(preset_filter: Option<&str>, input_file: Option<&std::path::Path>) -> Result<()> {
+    println!("==========================================================================================");
+    println!("             MicStudio Live vs. Offline Unified Pipeline Verification                      ");
+    println!("==========================================================================================");
+
+    // 1. Resolve test input WAV file
+    let input_path = if let Some(p) = input_file {
+        p.to_path_buf()
+    } else {
+        let p_jack = std::path::PathBuf::from("/home/manisk/Downloads/jackhammer.wav");
+        let p_harv = std::path::PathBuf::from("/home/manisk/Downloads/harvard.wav");
+        if p_jack.exists() {
+            p_jack
+        } else if p_harv.exists() {
+            p_harv
+        } else {
+            anyhow::bail!("No test input audio found in /home/manisk/Downloads/");
+        }
+    };
+
+    println!(":: Input Reference Audio : {}", input_path.display());
+
+    // 2. Resample/normalize input to 48kHz mono 24-bit PCM at /tmp/micstudio_verify_in_48k.wav
+    let (raw_samples, in_info) = crate::renderer::read_wav_mono(&input_path)?;
+    let mut resampled_48k = crate::renderer::resample_to_48k(&raw_samples, in_info.sample_rate);
+    // Limit to 4.0 seconds (192,000 samples) so 13-preset sweep completes in ~15-20s
+    if resampled_48k.len() > 192000 {
+        resampled_48k.truncate(192000);
+    }
+    let test_in_path = std::path::PathBuf::from("/tmp/micstudio_verify_in_48k.wav");
+    crate::renderer::write_wav_24bit_48k(&test_in_path, &resampled_48k)?;
+    println!(":: Normalized Test Slice : 48.0 kHz Mono ({:.2}s, {} samples)", 
+        resampled_48k.len() as f64 / 48000.0, resampled_48k.len());
+
+    // 3. Ensure live daemon is running
+    if !is_engine_running() {
+        let _ = Command::new("systemctl").args(["--user", "start", "micstudio"]).output();
+        for _ in 0..20 {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            if is_engine_running() { break; }
+        }
+        if !is_engine_running() {
+            let exe = std::env::current_exe()?;
+            Command::new(exe).args(["daemon", "Natural Clean"]).spawn()?;
+            for _ in 0..20 {
+                std::thread::sleep(std::time::Duration::from_millis(50));
+                if is_engine_running() { break; }
+            }
+        }
+    }
+    if !is_engine_running() {
+        anyhow::bail!("Failed to connect to MicStudio live engine daemon");
+    }
+
+    // 4. Setup temporary PipeWire null-sink loopback
+    println!(":: Setting up PipeWire test loopback...");
+    let out = Command::new("pactl")
+        .args([
+            "load-module",
+            "module-null-sink",
+            "sink_name=micstudio_verify_sink",
+            "channels=1",
+            "channel_map=mono",
+            "sink_properties=device.description=MicStudio_Verify_Sink",
+        ])
+        .output()
+        .context("Failed to create temporary null sink")?;
+    let mod_id = String::from_utf8_lossy(&out.stdout).trim().to_string();
+
+    // Disconnect physical mic
+    let _ = Command::new("pw-link").args(["-d", "alsa_input.pci-0000_00_1f.3.analog-stereo:capture_FL", "capture.ghelper-audio:input_FL"]).output();
+    let _ = Command::new("pw-link").args(["-d", "alsa_input.pci-0000_00_1f.3.analog-stereo:capture_FR", "capture.ghelper-audio:input_FR"]).output();
+    // Connect null sink monitor to both input channels
+    let _ = Command::new("pw-link").args(["micstudio_verify_sink:monitor_MONO", "capture.ghelper-audio:input_FL"]).output();
+    let _ = Command::new("pw-link").args(["micstudio_verify_sink:monitor_MONO", "capture.ghelper-audio:input_FR"]).output();
+
+    let mgr = PresetManager::new()?;
+    let presets_to_test: Vec<_> = if let Some(filter) = preset_filter {
+        let p = mgr.find_preset(filter).with_context(|| format!("Preset '{}' not found", filter))?;
+        vec![p]
+    } else {
+        mgr.all_presets().to_vec()
+    };
+
+    println!("\n{:<15} | {:<9} | {:<9} | {:<9} | {:<9} | {:<7} | {:<7} | {:<7} | {:<7} | {:<6}",
+        "Preset", "Live Peak", "Off Peak", "Live RMS", "Off RMS", "Δ RMS", "Δ Low", "Δ Mid", "Δ High", "Status"
+    );
+    println!("{:-<15}-+-{:-<9}-+-{:-<9}-+-{:-<9}-+-{:-<9}-+-{:-<7}-+-{:-<7}-+-{:-<7}-+-{:-<7}-+-{:-<6}",
+        "", "", "", "", "", "", "", "", "", ""
+    );
+
+    let mut all_passed = true;
+
+    for preset in &presets_to_test {
+        let slug = preset.name.to_lowercase().replace(' ', "-");
+        let off_path = std::path::PathBuf::from(format!("/tmp/verify_off_{}.wav", slug));
+        let live_path = std::path::PathBuf::from(format!("/tmp/verify_live_{}.wav", slug));
+
+        // a. Switch live preset
+        let _ = send_command(&IpcRequest::ApplyPreset(preset.clone()));
+        std::thread::sleep(std::time::Duration::from_millis(150));
+
+        // b. Render offline
+        let off_opt = crate::renderer::RenderOptions {
+            input_path: test_in_path.clone(),
+            output_path: off_path.clone(),
+            preset: preset.clone(),
+            ..Default::default()
+        };
+        crate::renderer::render_file(&off_opt)?;
+
+        // c. Live playback & capture
+        let _ = std::fs::remove_file(&live_path);
+        let mut rec_child = Command::new("pw-record")
+            .args(["--target", "ghelper-audio", "--channels", "1", "--rate", "48000", "--format", "s24", live_path.to_str().unwrap()])
+            .spawn()
+            .context("Failed to spawn pw-record")?;
+
+        std::thread::sleep(std::time::Duration::from_millis(150));
+        let _ = Command::new("pw-play")
+            .args(["--target", "micstudio_verify_sink", test_in_path.to_str().unwrap()])
+            .status();
+        // Give 1000ms for all audio to fully drain through PipeWire and ring buffers
+        std::thread::sleep(std::time::Duration::from_millis(1000));
+
+        unsafe {
+            libc::kill(rec_child.id() as i32, libc::SIGINT);
+        }
+        let _ = rec_child.wait();
+
+        // d. Read and analyze
+        let (off_samples, _) = crate::renderer::read_wav_mono(&off_path)?;
+        let (live_raw, _) = crate::renderer::read_wav_mono(&live_path)?;
+
+        // Align live to offline via normalized cross-correlation
+        let win_start = 2400.min(off_samples.len().saturating_sub(9600));
+        let win_len = 9600.min(off_samples.len().saturating_sub(win_start));
+        let off_ref = &off_samples[win_start..win_start + win_len];
+        let off_energy: f32 = off_ref.iter().map(|&x| x * x).sum();
+
+        let search_len = live_raw.len().saturating_sub(win_start + win_len).min(48000);
+        let mut best_tau = 0;
+        let mut max_corr = -1.0f32;
+
+        if off_energy > 1e-6 && search_len > 0 {
+            for tau in (0..search_len).step_by(2) {
+                let live_slice = &live_raw[tau + win_start..tau + win_start + win_len];
+                let mut dot = 0.0f32;
+                let mut live_energy = 0.0f32;
+                for k in 0..win_len {
+                    dot += off_ref[k] * live_slice[k];
+                    live_energy += live_slice[k] * live_slice[k];
+                }
+                if live_energy > 0.01 {
+                    let norm_corr = dot / (off_energy * live_energy).sqrt();
+                    if norm_corr > max_corr {
+                        max_corr = norm_corr;
+                        best_tau = tau;
+                    }
+                }
+            }
+        }
+
+        let aligned_end = (best_tau + off_samples.len()).min(live_raw.len());
+        let live_aligned = if best_tau < live_raw.len() {
+            &live_raw[best_tau..aligned_end]
+        } else {
+            &[]
+        };
+
+        let cmp_len = off_samples.len().min(live_aligned.len());
+        let off_cmp = &off_samples[..cmp_len];
+        let live_cmp = &live_aligned[..cmp_len];
+
+        // Peaks & RMS
+        let mut off_max = 0.0f32;
+        let mut live_max = 0.0f32;
+        let mut off_sq = 0.0f64;
+        let mut live_sq = 0.0f64;
+
+        for i in 0..cmp_len {
+            let o = off_cmp[i];
+            let l = live_cmp[i];
+            if o.abs() > off_max { off_max = o.abs(); }
+            if l.abs() > live_max { live_max = l.abs(); }
+            off_sq += (o as f64) * (o as f64);
+            live_sq += (l as f64) * (l as f64);
+        }
+
+        let off_peak_db = if off_max > 1e-6 { 20.0 * off_max.log10() } else { -96.0 };
+        let live_peak_db = if live_max > 1e-6 { 20.0 * live_max.log10() } else { -96.0 };
+
+        let off_rms = if cmp_len > 0 { (off_sq / cmp_len as f64).sqrt() as f32 } else { 0.0 };
+        let live_rms = if cmp_len > 0 { (live_sq / cmp_len as f64).sqrt() as f32 } else { 0.0 };
+        let off_rms_db = if off_rms > 1e-6 { 20.0 * off_rms.log10() } else { -96.0 };
+        let live_rms_db = if live_rms > 1e-6 { 20.0 * live_rms.log10() } else { -96.0 };
+        let delta_rms = (live_rms_db - off_rms_db).abs();
+
+        // Spectral Bands
+        // Low: LowPass 250Hz, Mid: BandPass 1000Hz, High: HighPass 4000Hz
+        let delta_low = calc_band_delta(off_cmp, live_cmp, crate::dsp::biquad::FilterType::LowPass, 250.0, 0.707);
+        let delta_mid = calc_band_delta(off_cmp, live_cmp, crate::dsp::biquad::FilterType::BandPass, 1000.0, 0.5);
+        let delta_high = calc_band_delta(off_cmp, live_cmp, crate::dsp::biquad::FilterType::HighPass, 4000.0, 0.707);
+
+        let peak_pass = live_peak_db <= -0.99 && off_peak_db <= -0.99;
+        let rms_pass = delta_rms < 0.55;
+        let spectral_pass = delta_low < 1.00 && delta_mid < 1.00 && delta_high < 1.00;
+        let pass = peak_pass && rms_pass && spectral_pass;
+
+        if !pass {
+            all_passed = false;
+        }
+
+        let status_str = if pass { "PASS" } else { "FAIL" };
+
+        println!("{:<15} | {:>7.2} dB | {:>7.2} dB | {:>7.2} dB | {:>7.2} dB | {:>5.2} dB | {:>5.2} dB | {:>5.2} dB | {:>5.2} dB | {}",
+            preset.name, live_peak_db, off_peak_db, live_rms_db, off_rms_db, delta_rms, delta_low, delta_mid, delta_high, status_str
+        );
+    }
+
+    // 5. Cleanup
+    println!("\n:: Cleaning up PipeWire test routing...");
+    let _ = Command::new("pw-link").args(["-d", "micstudio_verify_sink:monitor_MONO", "capture.ghelper-audio:input_FL"]).output();
+    let _ = Command::new("pw-link").args(["-d", "micstudio_verify_sink:monitor_MONO", "capture.ghelper-audio:input_FR"]).output();
+    let _ = Command::new("pw-link").args(["alsa_input.pci-0000_00_1f.3.analog-stereo:capture_FL", "capture.ghelper-audio:input_FL"]).output();
+    let _ = Command::new("pw-link").args(["alsa_input.pci-0000_00_1f.3.analog-stereo:capture_FR", "capture.ghelper-audio:input_FR"]).output();
+    let _ = Command::new("pactl").args(["unload-module", &mod_id]).output();
+
+    // Restore Natural Clean
+    let _ = apply_voice_internal("Natural Clean", false);
+
+    println!("==========================================================================================");
+    if all_passed {
+        println!(">>> VERIFICATION RESULT: ALL PRESETS PASSED (Peak <= -1.00 dBFS, ΔRMS < 0.55 dB, Spectral < 1.0 dB)");
+        Ok(())
+    } else {
+        anyhow::bail!("Verification failed: One or more presets deviated beyond allowable tolerances.");
+    }
+}
+
+fn calc_band_delta(off: &[f32], live: &[f32], filter_type: crate::dsp::biquad::FilterType, freq: f32, q: f32) -> f32 {
+    let mut b_off = crate::dsp::biquad::Biquad::new();
+    b_off.configure(filter_type, freq, q, 0.0, 48000.0);
+    let mut b_live = crate::dsp::biquad::Biquad::new();
+    b_live.configure(filter_type, freq, q, 0.0, 48000.0);
+
+    let mut off_sq = 0.0f64;
+    let mut live_sq = 0.0f64;
+
+    for i in 0..off.len() {
+        let fo = b_off.process(off[i]);
+        let fl = b_live.process(live[i]);
+        off_sq += (fo as f64) * (fo as f64);
+        live_sq += (fl as f64) * (fl as f64);
+    }
+
+    let n = off.len().max(1) as f64;
+    let off_rms = (off_sq / n).sqrt() as f32;
+    let live_rms = (live_sq / n).sqrt() as f32;
+
+    // Noise floor threshold (-32 dBFS)
+    if off_rms < 0.025 && live_rms < 0.025 {
+        return 0.0;
+    }
+
+    let off_db = if off_rms > 1e-6 { 20.0 * off_rms.log10() } else { -96.0 };
+    let live_db = if live_rms > 1e-6 { 20.0 * live_rms.log10() } else { -96.0 };
+
+    (live_db - off_db).abs()
+}
+
+pub fn run_live_verify(preset: Option<&str>, duration_secs: u32) -> Result<()> {
+    println!("=== MicStudio Real Hardware Live Verification ===");
+    println!(":: Hardware Mic Target : alsa_input.pci-0000_00_1f.3.analog-stereo");
+    println!(":: Virtual Source Node : ghelper-audio / ghelper-audio-fx");
+    println!(":: Test Duration       : {}s per preset", duration_secs);
+
+    let presets_to_test: Vec<&str> = if let Some(p) = preset {
+        vec![p]
+    } else {
+        vec!["Natural Clean", "Deep Voice", "Daft Punk"]
+    };
+
+    println!("\n{:<15} | {:>10} | {:>10} | {:>7} | {:>8} | {}",
+        "Preset", "Peak (dBFS)", "RMS (dBFS)", "Clicks", "Dropouts", "Status"
+    );
+    println!("{:-<15}-+-{:-<10}-+-{:-<10}-+-{:-<7}-+-{:-<8}-+-{:-<6}",
+        "", "", "", "", "", ""
+    );
+
+    let mut all_passed = true;
+    let mut passed_presets: Vec<String> = Vec::new();
+
+    for &name in &presets_to_test {
+        apply_voice_internal(name, false)?;
+        std::thread::sleep(std::time::Duration::from_millis(150));
+
+        let is_clean = name.eq_ignore_ascii_case("Natural Clean");
+        let target = if is_clean { "ghelper-audio" } else { "ghelper-audio-fx" };
+
+        let test_wav = std::path::PathBuf::from(format!("/tmp/micstudio_hw_test_{}.wav", name.replace(' ', "_")));
+        let raw_wav = std::path::PathBuf::from(format!("/tmp/micstudio_hw_raw_{}.wav", name.replace(' ', "_")));
+        let _ = std::fs::remove_file(&test_wav);
+        let _ = std::fs::remove_file(&raw_wav);
+
+        println!(":: Recording {}s for preset '{}'... (Speak into your microphone now)", duration_secs, name);
+
+        let proc_child = Command::new("pw-record")
+            .args(["--target", target, "--channels", "1", test_wav.to_str().unwrap()])
+            .spawn();
+        let raw_child = Command::new("pw-record")
+            .args(["--target", "alsa_input.pci-0000_00_1f.3.analog-stereo", "--channels", "1", raw_wav.to_str().unwrap()])
+            .spawn();
+
+        let mut proc_c = match proc_child {
+            Ok(c) => c,
+            Err(e) => anyhow::bail!("Failed to spawn pw-record for target {}: {}", target, e),
+        };
+        let mut raw_c = match raw_child {
+            Ok(c) => c,
+            Err(e) => anyhow::bail!("Failed to spawn pw-record for raw mic: {}", e),
+        };
+
+        std::thread::sleep(std::time::Duration::from_secs(duration_secs as u64));
+        unsafe {
+            libc::kill(proc_c.id() as i32, libc::SIGINT);
+            libc::kill(raw_c.id() as i32, libc::SIGINT);
+        }
+        let _ = proc_c.wait();
+        let _ = raw_c.wait();
+
+        if !test_wav.exists() {
+            println!("{:<15} | {:>10} | {:>10} | {:>7} | {:>8} | FAIL (no file)", name, "-inf", "-inf", "0", "0");
+            all_passed = false;
+            continue;
+        }
+
+        let (samples, _) = crate::renderer::read_wav_mono(&test_wav)?;
+        let mut peak = 0.0f32;
+        let mut sum_sq = 0.0f64;
+        let mut clicks = 0;
+        let mut dropouts = 0;
+        let mut cur_zero = 0;
+
+        for i in 0..samples.len() {
+            let s = samples[i];
+            if s.abs() > peak { peak = s.abs(); }
+            sum_sq += (s as f64) * (s as f64);
+            if i > 0 {
+                let diff = (s - samples[i - 1]).abs();
+                if diff > 0.20 { clicks += 1; }
+            }
+            if s.abs() < 1e-4 {
+                cur_zero += 1;
+            } else {
+                if cur_zero >= 240 { dropouts += 1; }
+                cur_zero = 0;
+            }
+        }
+        if cur_zero >= 240 { dropouts += 1; }
+
+        let n = samples.len().max(1);
+        let rms = (sum_sq / n as f64).sqrt() as f32;
+        let peak_db = if peak > 1e-6 { 20.0 * peak.log10() } else { -120.0 };
+        let rms_db = if rms > 1e-6 { 20.0 * rms.log10() } else { -120.0 };
+
+        let is_intentional_fx = name.eq_ignore_ascii_case("Cyber Chopper") || name.eq_ignore_ascii_case("Dalek");
+        let passed = peak_db <= -2.90 && rms_db >= -32.0 && rms_db <= -14.0 && clicks == 0 && (dropouts == 0 || is_intentional_fx);
+
+        if passed {
+            passed_presets.push(name.to_string());
+        } else {
+            all_passed = false;
+        }
+
+        let status_str = if passed { "PASS" } else { "FAIL" };
+        println!("{:<15} | {:>7.2} dBFS | {:>7.2} dBFS | {:>7} | {:>8} | {}",
+            name, peak_db, rms_db, clicks, dropouts, status_str
+        );
+    }
+
+    let _ = apply_voice_internal("Natural Clean", false);
+
+    if !passed_presets.is_empty() {
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/home/manisk".to_string());
+        let v_path = std::path::Path::new(&home).join(".config").join("micstudio").join("verified.json");
+        let mut cur_verified: Vec<String> = if v_path.exists() {
+            if let Ok(data) = std::fs::read_to_string(&v_path) {
+                if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&data) {
+                    parsed["verified_presets"].as_array().map(|arr| {
+                        arr.iter().filter_map(|v| v.as_str().map(String::from)).collect()
+                    }).unwrap_or_default()
+                } else { Vec::new() }
+            } else { Vec::new() }
+        } else { Vec::new() };
+
+        for p in &passed_presets {
+            if !cur_verified.contains(p) {
+                cur_verified.push(p.clone());
+            }
+        }
+        let out_obj = serde_json::json!({
+            "verified_presets": cur_verified,
+            "timestamp": std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs_f64(),
+            "source": "live_real_mic"
+        });
+        let _ = std::fs::write(&v_path, serde_json::to_string_pretty(&out_obj)?);
+    }
+
+    println!("==========================================================================================");
+    if all_passed {
+        println!(">>> REAL MIC LIVE VERIFICATION: ALL TESTED PRESETS PASSED ON REAL HARDWARE MIC");
+        Ok(())
+    } else {
+        anyhow::bail!("Live real mic verification failed: One or more presets deviated from tolerances.");
+    }
+}
+

@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+hound = "3.5.1"
 anyhow = "1.0.104"
 clap = { version = "4.6.7", features = ["derive"] }
 crossbeam-channel = "0.5.17"
@@ -12,8 +13,9 @@ libc = "0.2.190"
 libspa = "0.10.1"
 libspa-sys = "0.10.1"
 nnnoiseless = "0.5.2"
-pipewire = "0.10.1"
+pipewire = { version = "0.10.1", features = ["v0_3_49"] }
 ratatui = "0.30.2"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 toml = "1.1.8"
+unicode-width = "0.2"

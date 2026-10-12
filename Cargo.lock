@@ -1121,6 +1121,7 @@ dependencies = [
  "clap 4.6.7",
  "crossbeam-channel",
  "crossterm",
+ "hound",
  "libc",
  "libspa",
  "libspa-sys",
@@ -1130,6 +1131,7 @@ dependencies = [
  "serde",
  "serde_json",
  "toml",
+ "unicode-width",
 ]
 
 [[package]]

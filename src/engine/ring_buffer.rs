@@ -1,13 +1,16 @@
 //! Lock-free Single-Producer Single-Consumer (SPSC) Audio Ring Buffer.
 //! Safe for real-time audio threads: zero allocations, zero mutexes, zero syscalls.
+//! Uses Dusky circular overwrite model: producer never blocks or drops,
+//! consumer automatically stays bounded to ultra-low latency (~10ms).
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 pub struct SpscRingBuffer {
     buffer: Box<[f32]>,
     capacity: usize,
-    write_idx: AtomicUsize,
-    read_idx: AtomicUsize,
+    mask: usize,
+    head: AtomicUsize,
+    tail: AtomicUsize,
 }
 
 impl SpscRingBuffer {
@@ -16,64 +19,85 @@ impl SpscRingBuffer {
         Self {
             buffer: vec![0.0; size].into_boxed_slice(),
             capacity: size,
-            write_idx: AtomicUsize::new(0),
-            read_idx: AtomicUsize::new(0),
+            mask: size - 1,
+            head: AtomicUsize::new(0),
+            tail: AtomicUsize::new(0),
         }
     }
 
     #[inline(always)]
     pub fn push(&self, sample: f32) -> bool {
-        let w = self.write_idx.load(Ordering::Relaxed);
-        let r = self.read_idx.load(Ordering::Acquire);
-
-        let next_w = (w + 1) & (self.capacity - 1);
-        if next_w == r {
-            // Buffer full (overflow)
-            return false;
-        }
-
-        // Unsafe cast to mutate buffer slot in single-producer context
+        let h = self.head.load(Ordering::Relaxed);
         unsafe {
             let ptr = self.buffer.as_ptr() as *mut f32;
-            *ptr.add(w) = sample;
+            *ptr.add(h & self.mask) = sample;
         }
-
-        self.write_idx.store(next_w, Ordering::Release);
+        self.head.store(h + 1, Ordering::Release);
         true
     }
 
     #[inline(always)]
     pub fn pop(&self) -> Option<f32> {
-        let r = self.read_idx.load(Ordering::Relaxed);
-        let w = self.write_idx.load(Ordering::Acquire);
+        let h = self.head.load(Ordering::Acquire);
+        let mut t = self.tail.load(Ordering::Relaxed);
 
-        if r == w {
-            // Buffer empty (underflow)
+        if h > t {
+            if h - t > 960 {
+                t = h.saturating_sub(480);
+            }
+        }
+
+        if t >= h {
             return None;
         }
 
         let sample = unsafe {
             let ptr = self.buffer.as_ptr();
-            *ptr.add(r)
+            *ptr.add(t & self.mask)
         };
 
-        let next_r = (r + 1) & (self.capacity - 1);
-        self.read_idx.store(next_r, Ordering::Release);
+        self.tail.store(t + 1, Ordering::Release);
         Some(sample)
     }
 
+    #[inline(always)]
+    pub fn pop_slice(&self, slice: &mut [f32]) {
+        let h = self.head.load(Ordering::Acquire);
+        let mut t = self.tail.load(Ordering::Relaxed);
+
+        if h > t {
+            if h - t > 960 + slice.len() {
+                t = h.saturating_sub(480 + slice.len());
+            }
+        }
+
+        for out in slice.iter_mut() {
+            if t < h {
+                *out = unsafe {
+                    let ptr = self.buffer.as_ptr();
+                    *ptr.add(t & self.mask)
+                };
+                t += 1;
+            } else {
+                *out = 0.0;
+            }
+        }
+        self.tail.store(t, Ordering::Release);
+    }
+
     pub fn available_read(&self) -> usize {
-        let w = self.write_idx.load(Ordering::Acquire);
-        let r = self.read_idx.load(Ordering::Relaxed);
-        (w + self.capacity - r) & (self.capacity - 1)
+        let h = self.head.load(Ordering::Acquire);
+        let t = self.tail.load(Ordering::Relaxed);
+        h.saturating_sub(t).min(self.capacity)
     }
 
     pub fn clear(&self) {
-        self.write_idx.store(0, Ordering::Relaxed);
-        self.read_idx.store(0, Ordering::Release);
+        let h = self.head.load(Ordering::Relaxed);
+        self.tail.store(h, Ordering::Release);
     }
 }
 
 // Safety: Single-Producer Single-Consumer guarantee across audio threads
 unsafe impl Send for SpscRingBuffer {}
 unsafe impl Sync for SpscRingBuffer {}
+

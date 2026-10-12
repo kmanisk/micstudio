@@ -1,14 +1,14 @@
-//! Real-Time Granular Overlap-Add Pitch Shifter.
-//! Smooth pitch transposition (-24 to +24 semitones) without FFT latency.
+//! High-Fidelity Granular Overlap-Add Pitch Shifter.
+//! Smooth, duration-preserving pitch transposition (-24 to +24 semitones)
+//! with 4-point Hermite cubic interpolation and Hann crossfading.
 
-pub const PITCH_BUFFER_SIZE: usize = 8192;
-pub const GRAIN_SIZE: usize = 2048; // ~42 ms at 48 kHz
+pub const PITCH_BUFFER_SIZE: usize = 16384; // ~341 ms at 48 kHz
+pub const GRAIN_SIZE: usize = 2048;         // ~42.7 ms at 48 kHz
 
 pub struct PitchShifter {
     buffer: [f32; PITCH_BUFFER_SIZE],
     write_idx: usize,
     phase1: f32,
-    phase2: f32,
     semitones: f32,
     ratio: f32,
     hann_window: [f32; GRAIN_SIZE],
@@ -26,7 +26,6 @@ impl PitchShifter {
             buffer: [0.0; PITCH_BUFFER_SIZE],
             write_idx: 0,
             phase1: 0.0,
-            phase2: (GRAIN_SIZE / 2) as f32,
             semitones: 0.0,
             ratio: 1.0,
             hann_window: hann,
@@ -49,38 +48,81 @@ impl PitchShifter {
     }
 
     #[inline(always)]
+    fn hermite_interpolate(y0: f32, y1: f32, y2: f32, y3: f32, x: f32) -> f32 {
+        let c0 = y1;
+        let c1 = 0.5 * (y2 - y0);
+        let c2 = y0 - 2.5 * y1 + 2.0 * y2 - 0.5 * y3;
+        let c3 = 0.5 * (y3 - y0) + 1.5 * (y1 - y2);
+        ((c3 * x + c2) * x + c1) * x + c0
+    }
+
+    #[inline(always)]
+    fn read_interpolated(&self, read_pos: f32) -> f32 {
+        let buf_len = PITCH_BUFFER_SIZE as f32;
+        let pos_norm = ((read_pos % buf_len) + buf_len) % buf_len;
+        let i1 = pos_norm as usize;
+        let frac = pos_norm - (i1 as f32);
+
+        let i0 = (i1 + PITCH_BUFFER_SIZE - 1) % PITCH_BUFFER_SIZE;
+        let i2 = (i1 + 1) % PITCH_BUFFER_SIZE;
+        let i3 = (i1 + 2) % PITCH_BUFFER_SIZE;
+
+        Self::hermite_interpolate(
+            self.buffer[i0],
+            self.buffer[i1],
+            self.buffer[i2],
+            self.buffer[i3],
+            frac,
+        )
+    }
+
+    #[inline(always)]
     pub fn process(&mut self, input: f32) -> f32 {
         if !self.enabled {
             return input;
         }
 
-        // Store input in circular ring buffer
-        self.buffer[self.write_idx] = input;
-        self.write_idx = (self.write_idx + 1) % PITCH_BUFFER_SIZE;
+        // Store input sample into ring buffer
+        let w = self.write_idx;
+        self.buffer[w] = input;
+        self.write_idx = (w + 1) % PITCH_BUFFER_SIZE;
 
-        let grain_len = GRAIN_SIZE as f32;
-        let p1_idx = self.phase1 as usize;
-        let p2_idx = self.phase2 as usize;
+        let g = GRAIN_SIZE as f32;
+        let half_g = g * 0.5;
 
-        let w1 = self.hann_window[p1_idx.min(GRAIN_SIZE - 1)];
-        let w2 = self.hann_window[p2_idx.min(GRAIN_SIZE - 1)];
+        // Phase 1 and Phase 2 (Tap 2 is 180° out of phase)
+        let p1 = self.phase1;
+        let p2 = if p1 + half_g >= g { p1 + half_g - g } else { p1 + half_g };
 
-        // Compute read positions relative to write head
-        let offset1 = (self.write_idx as f32 - p1_idx as f32 + PITCH_BUFFER_SIZE as f32) as usize % PITCH_BUFFER_SIZE;
-        let offset2 = (self.write_idx as f32 - p2_idx as f32 + PITCH_BUFFER_SIZE as f32) as usize % PITCH_BUFFER_SIZE;
+        let idx1 = (p1 as usize).min(GRAIN_SIZE - 1);
+        let idx2 = (p2 as usize).min(GRAIN_SIZE - 1);
+        let w1 = self.hann_window[idx1];
+        let w2 = self.hann_window[idx2];
 
-        let s1 = self.buffer[offset1] * w1;
-        let s2 = self.buffer[offset2] * w2;
+        // Base delay safety margin to avoid reading ahead of the write head
+        let base_delay = 64.0f32;
 
-        // Advance phases by pitch ratio
-        self.phase1 += self.ratio;
-        if self.phase1 >= grain_len {
-            self.phase1 -= grain_len;
-        }
+        // Delay values for the two grains:
+        // When delay slope is (1 - ratio), the read pointer advances through the buffer at rate `ratio`.
+        let delay1 = base_delay + p1;
+        let delay2 = base_delay + p2;
 
-        self.phase2 += self.ratio;
-        if self.phase2 >= grain_len {
-            self.phase2 -= grain_len;
+        let read_pos1 = (w as f32) - delay1;
+        let read_pos2 = (w as f32) - delay2;
+
+        let s1 = self.read_interpolated(read_pos1) * w1;
+        let s2 = self.read_interpolated(read_pos2) * w2;
+
+        // Advance phase slope only when signal is present to synchronize grains to voice onset
+        if input.abs() > 1e-4 || (s1.abs() + s2.abs()) > 1e-4 {
+            let slope = 1.0 - self.ratio;
+            self.phase1 += slope;
+            while self.phase1 >= g {
+                self.phase1 -= g;
+            }
+            while self.phase1 < 0.0 {
+                self.phase1 += g;
+            }
         }
 
         s1 + s2
@@ -90,6 +132,5 @@ impl PitchShifter {
         self.buffer.fill(0.0);
         self.write_idx = 0;
         self.phase1 = 0.0;
-        self.phase2 = (GRAIN_SIZE / 2) as f32;
     }
 }

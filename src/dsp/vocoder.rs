@@ -1,11 +1,12 @@
 //! 16-Band Vocoder Filterbank and Carrier Synthesizer with Matrix Ring-Modulation.
+//! High-intelligibility robotic speech synthesis with syllabic envelope tracking.
 
 use crate::dsp::biquad::{Biquad, FilterType};
 
 pub const NUM_VOCODER_BANDS: usize = 16;
 pub const VOCODER_FREQS: [f32; NUM_VOCODER_BANDS] = [
-    120.0, 180.0, 260.0, 360.0, 500.0, 680.0, 900.0, 1180.0,
-    1500.0, 1900.0, 2400.0, 3000.0, 3800.0, 4800.0, 6000.0, 7500.0,
+    150.0, 220.0, 320.0, 440.0, 600.0, 800.0, 1050.0, 1350.0,
+    1750.0, 2250.0, 2900.0, 3700.0, 4700.0, 5900.0, 7400.0, 9200.0,
 ];
 
 pub struct Vocoder {
@@ -13,16 +14,23 @@ pub struct Vocoder {
     carrier_filters: [Biquad; NUM_VOCODER_BANDS],
     envelopes: [f32; NUM_VOCODER_BANDS],
     
-    // Internal sawtooth carrier oscillators
+    // Internal dual detuned sawtooth carrier oscillators
     carrier_phase1: f32,
     carrier_phase2: f32,
     carrier_freq: f32,
     detune: f32, // Hz
     
-    // Matrix ring-mod oscillator (35 Hz)
+    // Noise generator state for unvoiced consonant articulation
+    noise_seed: u32,
+
+    // Matrix ring-mod oscillator (35 - 55 Hz)
     ring_phase: f32,
     ring_intensity: f32, // 0.0 to 1.0
     
+    // Envelope follower time constants
+    att_coeff: f32,
+    rel_coeff: f32,
+
     // Controls
     enabled: bool,
     mix: f32, // 0.0 (dry) to 1.0 (full wet vocoder)
@@ -35,9 +43,13 @@ impl Vocoder {
         let mut cf = [Biquad::new(); NUM_VOCODER_BANDS];
 
         for i in 0..NUM_VOCODER_BANDS {
-            vf[i].configure(FilterType::BandPass, VOCODER_FREQS[i], 3.0, 0.0, sample_rate);
-            cf[i].configure(FilterType::BandPass, VOCODER_FREQS[i], 3.0, 0.0, sample_rate);
+            vf[i].configure(FilterType::BandPass, VOCODER_FREQS[i], 3.5, 0.0, sample_rate);
+            cf[i].configure(FilterType::BandPass, VOCODER_FREQS[i], 3.5, 0.0, sample_rate);
         }
+
+        // Syllabic envelope: 6 ms attack, 25 ms release
+        let att_coeff = 1.0 - (-1.0 / (0.006 * sample_rate)).exp();
+        let rel_coeff = 1.0 - (-1.0 / (0.025 * sample_rate)).exp();
 
         Self {
             voice_filters: vf,
@@ -47,8 +59,11 @@ impl Vocoder {
             carrier_phase2: 0.0,
             carrier_freq: 110.0,
             detune: 1.5,
+            noise_seed: 0x12345678,
             ring_phase: 0.0,
             ring_intensity: 0.0,
+            att_coeff,
+            rel_coeff,
             enabled: false,
             mix: 0.0,
             sample_rate,
@@ -68,7 +83,13 @@ impl Vocoder {
         self.carrier_freq = carrier_hz.clamp(40.0, 880.0);
         self.detune = detune.clamp(0.0, 50.0);
         self.ring_intensity = ring_mod.clamp(0.0, 1.0);
-        self.enabled = self.mix > 0.05 || self.ring_intensity > 0.05;
+        self.enabled = self.mix > 0.02 || self.ring_intensity > 0.02;
+    }
+
+    #[inline(always)]
+    fn next_noise(&mut self) -> f32 {
+        self.noise_seed = self.noise_seed.wrapping_mul(1664525).wrapping_add(1013904223);
+        ((self.noise_seed >> 9) as f32) / 8388608.0 - 1.0
     }
 
     #[inline(always)]
@@ -77,65 +98,77 @@ impl Vocoder {
             return voice_input;
         }
 
-        // 1. Synthesize dual detuned sawtooth carrier
-        let step1 = self.carrier_freq / self.sample_rate;
-        let step2 = (self.carrier_freq + self.detune) / self.sample_rate;
+        let mut out = voice_input;
 
-        let saw1 = 2.0 * (self.carrier_phase1 - 0.5);
-        let saw2 = 2.0 * (self.carrier_phase2 - 0.5);
-        let carrier = 0.5 * (saw1 + saw2);
+        // 1. Channel Vocoder Synthesis
+        if self.mix > 0.02 {
+            let step1 = self.carrier_freq / self.sample_rate;
+            let step2 = (self.carrier_freq + self.detune) / self.sample_rate;
 
-        self.carrier_phase1 += step1;
-        if self.carrier_phase1 >= 1.0 {
-            self.carrier_phase1 -= 1.0;
-        }
+            let saw1 = 2.0 * self.carrier_phase1 - 1.0;
+            let saw2 = 2.0 * self.carrier_phase2 - 1.0;
+            let noise = self.next_noise();
 
-        self.carrier_phase2 += step2;
-        if self.carrier_phase2 >= 1.0 {
-            self.carrier_phase2 -= 1.0;
-        }
+            if voice_input.abs() > 1e-4 {
+                self.carrier_phase1 += step1;
+                if self.carrier_phase1 >= 1.0 {
+                    self.carrier_phase1 -= 1.0;
+                }
 
-        // 2. Filterbank Vocoder Modulation
-        let mut vocoded = 0.0f32;
-        for i in 0..NUM_VOCODER_BANDS {
-            let v_band = self.voice_filters[i].process(voice_input);
-            let c_band = self.carrier_filters[i].process(carrier);
-
-            // Envelope follower (fast attack 5ms, slow release 30ms)
-            let v_rect = v_band.abs();
-            if v_rect > self.envelopes[i] {
-                self.envelopes[i] = 0.8 * self.envelopes[i] + 0.2 * v_rect;
-            } else {
-                self.envelopes[i] = 0.98 * self.envelopes[i] + 0.02 * v_rect;
+                self.carrier_phase2 += step2;
+                if self.carrier_phase2 >= 1.0 {
+                    self.carrier_phase2 -= 1.0;
+                }
             }
 
-            vocoded += c_band * self.envelopes[i];
+            let mut vocoded_sum = 0.0f32;
+
+            for i in 0..NUM_VOCODER_BANDS {
+                // Analysis: Filter voice input into frequency band
+                let v_band = self.voice_filters[i].process(voice_input);
+
+                // Envelope follower with syllabic attack/release
+                let v_mag = v_band.abs();
+                if v_mag > self.envelopes[i] {
+                    self.envelopes[i] += self.att_coeff * (v_mag - self.envelopes[i]);
+                } else {
+                    self.envelopes[i] += self.rel_coeff * (v_mag - self.envelopes[i]);
+                }
+
+                // Synthesis: Build carrier. For high bands (> 3.5 kHz), blend in subtle noise
+                // so consonants ('s', 't', 'k') are crisp and articulate.
+                let raw_carrier = if VOCODER_FREQS[i] > 3500.0 {
+                    0.35 * saw1 + 0.35 * saw2 + 0.30 * noise
+                } else {
+                    0.50 * (saw1 + saw2)
+                };
+
+                let c_band = self.carrier_filters[i].process(raw_carrier);
+                vocoded_sum += c_band * self.envelopes[i];
+            }
+
+            // Normalization makeup gain to match voice level
+            let vocoded_norm = vocoded_sum * 12.0;
+            out = (1.0 - self.mix) * out + self.mix * vocoded_norm;
         }
 
-        // Normalize and scale vocoder speech
-        vocoded *= 6.0;
-
-        // 3. Matrix Ring Modulation (35 Hz carrier with smooth saturation)
-        let ring_out = if self.ring_intensity > 0.01 {
-            let ring_step = 35.0 / self.sample_rate;
+        // 2. Matrix Ring Modulation (Harmonic villain / robotic sidebands)
+        if self.ring_intensity > 0.02 {
+            let ring_step = 42.0 / self.sample_rate;
             let ring_carrier = (2.0 * std::f32::consts::PI * self.ring_phase).sin();
-            self.ring_phase += ring_step;
-            if self.ring_phase >= 1.0 {
-                self.ring_phase -= 1.0;
+            if voice_input.abs() > 1e-4 {
+                self.ring_phase += ring_step;
+                if self.ring_phase >= 1.0 {
+                    self.ring_phase -= 1.0;
+                }
             }
 
-            (voice_input * (1.0 - self.ring_intensity * 0.4) + (voice_input * ring_carrier) * self.ring_intensity * 1.2).tanh()
-        } else {
-            voice_input
-        };
-
-        // Combine base vocoder or dry signal with ring modulator
-        let base_signal = (1.0 - self.mix) * voice_input + self.mix * vocoded;
-        if self.ring_intensity > 0.01 {
-            (1.0 - self.ring_intensity) * base_signal + self.ring_intensity * ring_out
-        } else {
-            base_signal
+            let modulated = out * ring_carrier;
+            // Clean sideband blend with soft saturation
+            out = (1.0 - self.ring_intensity) * out + self.ring_intensity * (modulated * 1.5);
         }
+
+        out
     }
 
     pub fn reset(&mut self) {
