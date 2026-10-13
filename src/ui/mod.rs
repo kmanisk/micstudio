@@ -144,8 +144,14 @@ fn run_event_loop_with_state(
                     (KeyCode::Enter, _) => {
                         let _ = state.apply_selected();
                         monitor.restart();
+                        if state.show_details_modal {
+                            state.close_details_modal();
+                        }
                     }
                     (KeyCode::Char(' '), _) => {
+                        state.toggle_details_modal();
+                    }
+                    (KeyCode::Char('c'), _) => {
                         let _ = state.revert_clean();
                         monitor.restart();
                     }
@@ -229,7 +235,9 @@ fn run_event_loop_with_state(
                         state.toggle_help();
                     }
                     (KeyCode::Esc, _) => {
-                        if state.spectrograph_fullscreen {
+                        if state.show_details_modal {
+                            state.close_details_modal();
+                        } else if state.spectrograph_fullscreen {
                             state.spectrograph_fullscreen = false;
                         } else if !state.search_query.is_empty() {
                             state.search_query.clear();

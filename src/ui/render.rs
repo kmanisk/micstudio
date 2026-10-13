@@ -72,35 +72,12 @@ pub fn render_ui(frame: &mut Frame, state: &AppState) {
     if state.show_help {
         render_help_dialog(frame, area, state);
     }
+    if state.show_details_modal {
+        render_details_modal(frame, area, state);
+    }
 }
 
 fn render_top_bar(frame: &mut Frame, area: Rect, state: &AppState) {
-    let is_clean = state
-        .active_preset_name
-        .eq_ignore_ascii_case("Natural Clean");
-
-    let engine_state_spans = if is_clean {
-        vec![
-            Span::raw("State: "),
-            Span::styled(
-                "Clean",
-                Style::default()
-                    .fg(Color::Green)
-                    .add_modifier(Modifier::BOLD),
-            ),
-        ]
-    } else {
-        vec![
-            Span::raw("State: "),
-            Span::styled(
-                format!("FX ({})", state.active_preset_name),
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            ),
-        ]
-    };
-
     let meter_spans = if !state.meter_enabled {
         vec![Span::styled(
             "Meter: off",
@@ -133,11 +110,6 @@ fn render_top_bar(frame: &mut Frame, area: Rect, state: &AppState) {
                     Color::Green
                 }),
             ),
-            Span::raw(format!(" {:+5.1} dBFS", state.input_rms_db)),
-            Span::styled(
-                format!(" (Pk: {:+5.1})", peak_db),
-                Style::default().fg(Color::DarkGray),
-            ),
         ];
         if is_hw_clip {
             spans.push(Span::styled(
@@ -146,7 +118,7 @@ fn render_top_bar(frame: &mut Frame, area: Rect, state: &AppState) {
             ));
         } else if is_digital_limiting {
             spans.push(Span::styled(
-                " [DIGITAL LIMITING]",
+                " [LIMITING]",
                 Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
             ));
         }
@@ -163,8 +135,6 @@ fn render_top_bar(frame: &mut Frame, area: Rect, state: &AppState) {
         ),
         Span::raw(" │ "),
     ];
-    spans.extend(engine_state_spans);
-    spans.push(Span::raw(" │ "));
     spans.extend(meter_spans);
 
     if let Some(msg) = state.active_status() {
@@ -573,7 +543,7 @@ fn render_preset_details(frame: &mut Frame, area: Rect, state: &AppState) {
     let is_selected_active = selected
         .name
         .eq_ignore_ascii_case(&state.active_preset_name);
-    let title = format!(" Selected Preset: {} ", fit_string(&selected.name, 28));
+    let title = format!(" Model: {} ", fit_string(&selected.name, 28));
 
     let block = Block::default().borders(Borders::ALL).title(title);
     let inner = block.inner(area);
@@ -585,158 +555,202 @@ fn render_preset_details(frame: &mut Frame, area: Rect, state: &AppState) {
 
     let mut lines = Vec::new();
     let inner_w = inner.width as usize;
-    let inner_h = inner.height as usize;
 
-    if inner_h <= 6 {
-        // Compact mode (e.g. when embedded spectrograph is active)
-        let state_badge = if is_selected_active {
-            Span::styled(
-                "● ACTIVE",
-                Style::default()
-                    .fg(Color::Green)
-                    .add_modifier(Modifier::BOLD),
-            )
+    // Line 1: Name + Active indicator + Category
+    let state_badge = if is_selected_active {
+        Span::styled(
+            "● Active",
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        )
+    } else {
+        Span::styled("○ Inactive", Style::default().fg(Color::DarkGray))
+    };
+
+    lines.push(Line::from(vec![
+        Span::styled(
+            &selected.name,
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("   "),
+        state_badge,
+        Span::raw("   "),
+        Span::styled(
+            format!("Category: {}", selected.category),
+            Style::default().fg(Color::DarkGray),
+        ),
+    ]));
+
+    // Line 2: Compact audio parameters line
+    let spec_tags = if selected.name.eq_ignore_ascii_case("Natural Clean") {
+        let boost_str = if state.quiet_boost_enabled {
+            format!("Boost: {:+.0} dB [ON]", state.quiet_boost_db)
         } else {
+            "Boost: OFF".to_string()
+        };
+        format!(
+            "Denoise: {:.0} dB │ {} │ Gain: {:+.1} dB │ Anti-Shout: Active",
+            state.dpdfnet_attenuation, boost_str, state.output_gain_db
+        )
+    } else {
+        let mut parts = Vec::new();
+        if selected.pitch_semitones.abs() > 0.01 {
+            parts.push(format!("Pitch: {:+.1} st", selected.pitch_semitones));
+        }
+        parts.push(format!("Boost: {:+.1} dB", selected.model_gain_db));
+        parts.push(format!("Denoise: {:.0} dB", state.dpdfnet_attenuation));
+        let mix_pct = if is_selected_active {
+            state.effect_mix_pct
+        } else {
+            ((1.0 - selected.wet_dry_mix).clamp(0.0, 1.0) * 100.0).round() as u32
+        };
+        parts.push(format!("Mix: {}%", mix_pct));
+        parts.push("Anti-Shout: Active".to_string());
+        parts.join(" │ ")
+    };
+
+    lines.push(Line::from(vec![Span::styled(
+        fit_string(&spec_tags, inner_w.saturating_sub(2)),
+        Style::default().fg(Color::White),
+    )]));
+
+    // Line 3: Blank separator if space permits
+    if inner.height >= 4 {
+        lines.push(Line::raw(""));
+    }
+
+    // Line 4: Clean actionable prompt
+    if inner.height >= 4 {
+        lines.push(Line::from(vec![
             Span::styled(
-                "○ PREVIEW",
+                "[Space] ",
                 Style::default()
                     .fg(Color::Yellow)
                     .add_modifier(Modifier::BOLD),
-            )
-        };
-        lines.push(Line::from(vec![
-            Span::styled(
-                &selected.name,
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
             ),
-            Span::raw("  "),
-            state_badge,
-            Span::raw("  "),
             Span::styled(
-                format!("({})", selected.category),
+                "Model details & DSP chain modal   ",
                 Style::default().fg(Color::DarkGray),
             ),
-        ]));
-
-        let desc_fit = fit_string(&selected.description, inner_w.saturating_sub(2));
-        lines.push(Line::from(vec![Span::styled(
-            desc_fit,
-            Style::default().fg(Color::Gray),
-        )]));
-
-        let spec_rows = build_preset_spec_rows(selected, is_selected_active, state);
-        let mut key_tags = Vec::new();
-        for r in spec_rows.iter().skip(1).take(4) {
-            key_tags.push(format!(
-                "{}: {}",
-                r.key.trim_end_matches(':'),
-                r.val.split_whitespace().next().unwrap_or(&r.val)
-            ));
-        }
-        lines.push(Line::from(vec![Span::styled(
-            fit_string(&key_tags.join(" │ "), inner_w.saturating_sub(2)),
-            Style::default().fg(Color::Cyan),
-        )]));
-    } else {
-        // Full tabular mode matching user reference TUI
-        // Line 1: Name and Category header
-        lines.push(Line::from(vec![
             Span::styled(
-                &selected.name,
+                "[Enter] ",
                 Style::default()
-                    .fg(Color::Cyan)
+                    .fg(Color::White)
                     .add_modifier(Modifier::BOLD),
             ),
-            Span::raw("  "),
-            Span::styled(
-                format!("·  {}", selected.category),
-                Style::default().fg(Color::DarkGray),
-            ),
+            Span::styled("Apply", Style::default().fg(Color::DarkGray)),
         ]));
-
-        let spec_rows = build_preset_spec_rows(selected, is_selected_active, state);
-        // Reserve 1 line for header, and 1 line for description footer
-        let max_specs = inner_h.saturating_sub(2);
-        let key_col_w = 14;
-
-        for r in spec_rows.iter().take(max_specs) {
-            let key_str = format!("{:<width$}", r.key, width = key_col_w);
-            let val_fit = fit_string(&r.val, inner_w.saturating_sub(key_col_w));
-            lines.push(Line::from(vec![
-                Span::styled(key_str, Style::default().fg(Color::LightCyan)),
-                Span::styled(val_fit, r.style),
-            ]));
-        }
-
-        let remaining_lines = inner_h.saturating_sub(lines.len());
-        if remaining_lines >= 3 {
-            lines.push(Line::raw(""));
-            lines.push(Line::from(vec![Span::styled(
-                "Description",
-                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
-            )]));
-            let words: Vec<&str> = selected.description.split_whitespace().collect();
-            let mut cur_line = String::new();
-            let mut rendered_desc_lines = 0;
-            let max_desc_lines = remaining_lines - 2;
-
-            for word in words {
-                if cur_line.is_empty() {
-                    cur_line.push_str(word);
-                } else if cur_line.len() + 1 + word.len() <= inner_w {
-                    cur_line.push(' ');
-                    cur_line.push_str(word);
-                } else {
-                    lines.push(Line::from(vec![Span::styled(
-                        cur_line.clone(),
-                        Style::default().fg(Color::Gray),
-                    )]));
-                    rendered_desc_lines += 1;
-                    cur_line = word.to_string();
-                    if rendered_desc_lines >= max_desc_lines {
-                        break;
-                    }
-                }
-            }
-            if !cur_line.is_empty() && rendered_desc_lines < max_desc_lines {
-                lines.push(Line::from(vec![Span::styled(
-                    cur_line,
-                    Style::default().fg(Color::Gray),
-                )]));
-            }
-        } else if remaining_lines >= 1 {
-            let desc_fit = fit_string(&selected.description, inner_w.saturating_sub(14));
-            lines.push(Line::from(vec![
-                Span::styled(
-                    format!("{:<width$}", "Description:", width = key_col_w),
-                    Style::default().fg(Color::DarkGray),
-                ),
-                Span::styled(desc_fit, Style::default().fg(Color::Gray)),
-            ]));
-        }
     }
 
     let p = Paragraph::new(lines);
     frame.render_widget(p, inner);
 }
 
-fn render_spectrograph_module(frame: &mut Frame, area: Rect, state: &AppState) {
-    let mode_str = match state.spectrograph_mode {
-        crate::ui::app::SpectrographMode::RtaBars => "RTA Spectrum",
-        crate::ui::app::SpectrographMode::Waterfall => "Waterfall Heatmap",
+fn render_details_modal(frame: &mut Frame, area: Rect, state: &AppState) {
+    let popup_w = 68.min(area.width.saturating_sub(4));
+    let popup_h = 17.min(area.height.saturating_sub(2));
+
+    let popup_x = (area.width.saturating_sub(popup_w)) / 2;
+    let popup_y = (area.height.saturating_sub(popup_h)) / 2;
+
+    let popup_rect = Rect::new(popup_x, popup_y, popup_w, popup_h);
+
+    frame.render_widget(Clear, popup_rect);
+
+    let selected = state.selected_preset();
+    let is_selected_active = selected
+        .name
+        .eq_ignore_ascii_case(&state.active_preset_name);
+
+    let title = format!(" {} (Model Details & Chain) ", selected.name);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(title)
+        .border_style(Style::default().fg(Color::Cyan));
+    let inner = block.inner(popup_rect);
+    frame.render_widget(block, popup_rect);
+
+    let inner_w = inner.width as usize;
+    let mut lines = Vec::new();
+
+    let state_span = if is_selected_active {
+        Span::styled(
+            "● Active (Live on ghelper-audio)",
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        )
+    } else {
+        Span::styled(
+            "○ Preview (Enter to apply)",
+            Style::default().fg(Color::DarkGray),
+        )
     };
-    let title = format!(
-        " Live Spectrograph [{}] (m: mode, s: zoom) │ Peak: {:>+5.1} dB │ RMS: {:>+5.1} dB ",
-        mode_str,
-        if state.spectrum.peak_level > 1e-5 {
-            20.0 * state.spectrum.peak_level.log10()
-        } else {
-            -96.0
-        },
-        state.spectrum.rms_db
-    );
+
+    lines.push(Line::from(vec![
+        Span::styled("State:        ", Style::default().fg(Color::LightCyan)),
+        state_span,
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("Category:     ", Style::default().fg(Color::LightCyan)),
+        Span::styled(&selected.category, Style::default().fg(Color::White)),
+    ]));
+    lines.push(Line::raw(""));
+
+    let spec_rows = build_preset_spec_rows(selected, is_selected_active, state);
+    for r in spec_rows.iter().skip(1) {
+        let key_str = format!("{:<14}", r.key);
+        let val_fit = fit_string(&r.val, inner_w.saturating_sub(15));
+        lines.push(Line::from(vec![
+            Span::styled(key_str, Style::default().fg(Color::LightCyan)),
+            Span::styled(val_fit, r.style),
+        ]));
+    }
+
+    lines.push(Line::raw(""));
+    let chain_str = "DPDFNet AI ➔ LSP Parametric EQ ➔ LADSPA FX ➔ Leveler Comp ➔ Limiter";
+    lines.push(Line::from(vec![
+        Span::styled("Chain:        ", Style::default().fg(Color::LightCyan)),
+        Span::styled(
+            fit_string(chain_str, inner_w.saturating_sub(15)),
+            Style::default().fg(Color::Yellow),
+        ),
+    ]));
+
+    lines.push(Line::raw(""));
+    lines.push(Line::from(vec![
+        Span::styled(
+            "[Enter]",
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" Apply   ", Style::default().fg(Color::DarkGray)),
+        Span::styled(
+            "[r]",
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" Reset   ", Style::default().fg(Color::DarkGray)),
+        Span::styled(
+            "[Space/Esc]",
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" Close", Style::default().fg(Color::DarkGray)),
+    ]));
+
+    let p = Paragraph::new(lines);
+    frame.render_widget(p, inner);
+}
+
+fn render_spectrograph_module(frame: &mut Frame, area: Rect, state: &AppState) {
+    let title = " Spectrograph [Active] (m: mode) ".to_string();
 
     let block = Block::default()
         .borders(Borders::ALL)
@@ -1162,7 +1176,7 @@ fn render_live_controls(frame: &mut Frame, area: Rect, state: &AppState) {
     };
     lines.push(Line::from(vec![
         Span::styled(mark_4, line_4_style),
-        Span::styled("[5] Sidetone (Hear Mic) : ", line_4_style),
+        Span::styled("[5] Hear Voice (Monitor): ", line_4_style),
         sidetone_state,
     ]));
 
@@ -1266,49 +1280,22 @@ fn render_bottom_bar(frame: &mut Frame, area: Rect, state: &AppState) {
             Span::styled("m", key_style),
             Span::styled(": toggle mode │ ", action_style),
             Span::styled("Esc", key_style),
-            Span::styled(": return │ ", action_style),
-            Span::styled("q", key_style),
-            Span::styled(": quit", action_style),
-        ]
-    } else if area.width >= 105 {
-        vec![
-            Span::styled("j/k", key_style),
-            Span::styled(": select │ ", action_style),
-            Span::styled("Enter", key_style),
-            Span::styled(": apply │ ", action_style),
-            Span::styled("Space", key_style),
-            Span::styled(": clean │ ", action_style),
-            Span::styled("r", key_style),
-            Span::styled(": reset │ ", action_style),
-            Span::styled("R", key_style),
-            Span::styled(": reset all │ ", action_style),
-            Span::styled("w", key_style),
-            Span::styled(": save tweaks │ ", action_style),
-            Span::styled("s", key_style),
-            Span::styled(": spec │ ", action_style),
-            Span::styled("v", key_style),
-            Span::styled(": hear │ ", action_style),
-            Span::styled("?", key_style),
-            Span::styled(": help │ ", action_style),
-            Span::styled("q", key_style),
-            Span::styled(": quit", action_style),
+            Span::styled(": return", action_style),
         ]
     } else {
         vec![
             Span::styled("j/k", key_style),
-            Span::styled(": select │ ", action_style),
+            Span::styled(": move │ ", action_style),
             Span::styled("Enter", key_style),
             Span::styled(": apply │ ", action_style),
             Span::styled("Space", key_style),
+            Span::styled(": details │ ", action_style),
+            Span::styled("c", key_style),
             Span::styled(": clean │ ", action_style),
             Span::styled("r", key_style),
             Span::styled(": reset │ ", action_style),
             Span::styled("w", key_style),
-            Span::styled(": save tweaks │ ", action_style),
-            Span::styled("?", key_style),
-            Span::styled(": help │ ", action_style),
-            Span::styled("q", key_style),
-            Span::styled(": quit", action_style),
+            Span::styled(": save", action_style),
         ]
     };
 
@@ -1367,6 +1354,10 @@ fn render_help_dialog(frame: &mut Frame, area: Rect, state: &AppState) {
         ]),
         Line::from(vec![
             Span::styled("Space          ", key_style),
+            Span::styled(": Open preset details & DSP chain modal", desc_style),
+        ]),
+        Line::from(vec![
+            Span::styled("c              ", key_style),
             Span::styled(": Immediately revert to Natural Clean", desc_style),
         ]),
         Line::from(vec![
@@ -1409,13 +1400,13 @@ fn render_help_dialog(frame: &mut Frame, area: Rect, state: &AppState) {
         Line::from(vec![
             Span::styled("Tab / S-Tab    ", key_style),
             Span::styled(
-                ": Cycle 7 controls (DPDFNet / Quiet Boost / Gain / Wet Mix / Sidetone / VU / Spec)",
+                ": Cycle 7 controls (DPDFNet / Quiet Boost / Gain / Wet Mix / Hear Voice / VU / Spec)",
                 desc_style,
             ),
         ]),
         Line::from(vec![
             Span::styled("v / t          ", key_style),
-            Span::styled(": Toggle sidetone / Toggle VU meter", desc_style),
+            Span::styled(": Toggle Hear Voice (monitor) / Toggle VU meter", desc_style),
         ]),
         Line::from(vec![
             Span::styled("? / Esc        ", key_style),

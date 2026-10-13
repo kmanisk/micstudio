@@ -60,6 +60,7 @@ pub struct AppState {
     pub spectrograph_mode: SpectrographMode,
     pub spectrum: LiveSpectrumData,
     pub show_help: bool,
+    pub show_details_modal: bool,
     pub dynamic_stages: Vec<String>,
     pub status_message: Option<(String, Instant)>,
     pub should_quit: bool,
@@ -111,6 +112,7 @@ impl AppState {
             spectrograph_mode: SpectrographMode::RtaBars,
             spectrum: LiveSpectrumData::default(),
             show_help: false,
+            show_details_modal: false,
             dynamic_stages,
             status_message: None,
             should_quit: false,
@@ -374,14 +376,6 @@ impl AppState {
         if self.sidetone_enabled {
             self.meter_enabled = true;
         }
-        self.set_status(format!(
-            "Sidetone: {}",
-            if self.sidetone_enabled {
-                "ON (Live Spectrograph Active)"
-            } else {
-                "OFF"
-            }
-        ));
         Ok(())
     }
 
@@ -393,10 +387,14 @@ impl AppState {
         if !self.meter_enabled {
             self.input_rms_db = -96.0;
         }
-        self.set_status(format!(
-            "Meter: {}",
-            if self.meter_enabled { "ON" } else { "OFF" }
-        ));
+    }
+
+    pub fn toggle_details_modal(&mut self) {
+        self.show_details_modal = !self.show_details_modal;
+    }
+
+    pub fn close_details_modal(&mut self) {
+        self.show_details_modal = false;
     }
 
     pub fn toggle_help(&mut self) {

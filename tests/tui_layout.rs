@@ -42,9 +42,10 @@ fn test_render_80x24_minimal_resolution() {
     }
 
     assert!(full_rendered.contains("MICSTUDIO"), "Top bar title missing");
+    assert!(full_rendered.contains("Meter:"), "VU meter missing");
     assert!(
-        full_rendered.contains("State: Clean"),
-        "Clean state indicator missing"
+        !full_rendered.contains("State: Clean"),
+        "State: Clean must be removed to avoid top bar clutter"
     );
     assert!(full_rendered.contains("Presets"), "Presets panel missing");
     assert!(
@@ -72,11 +73,12 @@ fn test_render_80x24_minimal_resolution() {
         "Effect Wet Mix live control missing"
     );
     assert!(
-        full_rendered.contains("Sidetone (Hear Mic)"),
-        "Sidetone live control missing"
+        full_rendered.contains("Hear Voice (Monitor)"),
+        "Hear Voice live control missing"
     );
     assert!(full_rendered.contains("j/k"), "Footer hotkeys missing");
     assert!(full_rendered.contains("Space"), "Space hotkey missing");
+    assert!(full_rendered.contains("clean"), "Clean hotkey missing");
 }
 
 #[test]
@@ -290,6 +292,19 @@ fn test_print_screen_dumps_80x24() {
         }
         println!("{}", line);
     }
+
+    // 3. Modal details screen dump
+    state.show_details_modal = true;
+    terminal2.draw(|f| render_ui(f, &state)).unwrap();
+    let buffer3 = terminal2.backend().buffer();
+    println!("\n=== SCREEN DUMP 3: DETAILS MODAL (80x24) ===");
+    for y in 0..24 {
+        let mut line = String::new();
+        for x in 0..80 {
+            line.push_str(buffer3.cell((x, y)).unwrap().symbol());
+        }
+        println!("{}", line);
+    }
 }
 
 #[test]
@@ -340,7 +355,7 @@ fn test_spectrograph_rendering_and_modes() {
             rendered.push_str(buf.cell((x, y)).unwrap().symbol());
         }
     }
-    assert!(rendered.contains("Live Spectrograph [RTA Spectrum]"));
+    assert!(rendered.contains("Spectrograph [Active]"));
     assert!(rendered.contains("Live Controls (Shift+j/k or Tab to cycle, h/l to adjust)"));
 
     // 2. Waterfall mode
@@ -386,12 +401,12 @@ fn test_tui_pipeline_graph_and_preset_details() {
         "Denoise spec row missing in details pane"
     );
     assert!(
-        content.contains("State:"),
-        "State spec row missing in details pane"
-    );
-    assert!(
         content.contains("Active"),
         "Active status missing for active preset"
+    );
+    assert!(
+        content.contains("Model details"),
+        "Model details modal hint missing"
     );
     assert!(
         content.contains("reset"),
@@ -401,4 +416,19 @@ fn test_tui_pipeline_graph_and_preset_details() {
         content.contains("save"),
         "Save shortcut missing from bottom bar"
     );
+
+    // Modal popup test
+    state.show_details_modal = true;
+    assert!(terminal.draw(|f| render_ui(f, &state)).is_ok());
+    let buf_modal = terminal.backend().buffer().clone();
+    let mut modal_content = String::new();
+    for y in 0..30 {
+        for x in 0..100 {
+            modal_content.push_str(buf_modal.cell((x, y)).unwrap().symbol());
+        }
+        modal_content.push('\n');
+    }
+    assert!(modal_content.contains("Model Details & Chain"));
+    assert!(modal_content.contains("State:"));
+    assert!(modal_content.contains("Chain:"));
 }
