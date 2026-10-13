@@ -358,7 +358,11 @@ fn test_tui_pipeline_graph_and_preset_details() {
     let mut terminal = Terminal::new(backend).unwrap();
     let mut state = AppState::new().unwrap();
     state.active_preset_name = "Deep Voice".to_string();
-    if let Some(pos) = state.presets.iter().position(|p| p.name == "Deep Voice") {
+    if let Some(pos) = state
+        .filtered_indices()
+        .iter()
+        .position(|&idx| state.presets[idx].name == "Deep Voice")
+    {
         state.cursor = pos;
     }
 
@@ -374,16 +378,20 @@ fn test_tui_pipeline_graph_and_preset_details() {
     }
 
     assert!(
-        content.contains("Pipeline"),
-        "Pipeline graph missing in details pane"
+        content.contains("Pitch:"),
+        "Pitch spec row missing in details pane"
     );
     assert!(
-        content.contains("Parameters"),
-        "Parameters breakdown missing"
+        content.contains("Denoise:"),
+        "Denoise spec row missing in details pane"
     );
     assert!(
-        content.contains("ACTIVE"),
-        "Active badge missing for active preset"
+        content.contains("State:"),
+        "State spec row missing in details pane"
+    );
+    assert!(
+        content.contains("Active"),
+        "Active status missing for active preset"
     );
     assert!(
         content.contains("reset"),

@@ -360,6 +360,214 @@ fn render_right_pane(frame: &mut Frame, area: Rect, state: &AppState) {
     }
 }
 
+struct SpecRow {
+    key: &'static str,
+    val: String,
+    style: Style,
+}
+
+fn build_preset_spec_rows(
+    selected: &crate::presets::Preset,
+    is_active: bool,
+    state: &AppState,
+) -> Vec<SpecRow> {
+    let mut rows = Vec::new();
+
+    // 1. State / Routing
+    let (state_text, state_style) = if is_active {
+        (
+            "● Active (Live on ghelper-audio)",
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        )
+    } else {
+        (
+            "○ Preview (Enter to apply)",
+            Style::default().fg(Color::Yellow),
+        )
+    };
+    rows.push(SpecRow {
+        key: "State:",
+        val: state_text.to_string(),
+        style: state_style,
+    });
+
+    if selected.name.eq_ignore_ascii_case("Natural Clean") {
+        rows.push(SpecRow {
+            key: "Denoise:",
+            val: format!("{:.0} dB (DPDFNet Neural AI)", state.dpdfnet_attenuation),
+            style: Style::default().fg(Color::Green),
+        });
+        rows.push(SpecRow {
+            key: "Quiet Boost:",
+            val: if state.quiet_boost_enabled {
+                format!("{:+.1} dB [ON] (Speech Leveler)", state.quiet_boost_db)
+            } else {
+                "OFF (+0 dB)".to_string()
+            },
+            style: if state.quiet_boost_enabled {
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::DarkGray)
+            },
+        });
+        rows.push(SpecRow {
+            key: "Output Gain:",
+            val: format!("{:+.1} dB", state.output_gain_db),
+            style: Style::default().fg(Color::White),
+        });
+        rows.push(SpecRow {
+            key: "Effect FX:",
+            val: "Direct Passthrough (100% Clean)".to_string(),
+            style: Style::default().fg(Color::Cyan),
+        });
+        rows.push(SpecRow {
+            key: "Anti-Shout:",
+            val: "Active (-2.0 dBFS Limiter Guard)".to_string(),
+            style: Style::default().fg(Color::Green),
+        });
+    } else {
+        // Creative model specific DSP specs (only active ones)
+        if selected.pitch_semitones.abs() > 0.01 {
+            let p_val = if selected.formant_preserving {
+                format!("{:+.1} st (Formants Preserved)", selected.pitch_semitones)
+            } else {
+                format!("{:+.1} st", selected.pitch_semitones)
+            };
+            rows.push(SpecRow {
+                key: "Pitch:",
+                val: p_val,
+                style: Style::default().fg(Color::Cyan),
+            });
+        }
+
+        if selected.distortion_level > 0.01 {
+            rows.push(SpecRow {
+                key: "Tube Drive:",
+                val: format!("{:.0}% Saturation", selected.distortion_level * 100.0),
+                style: Style::default().fg(Color::Yellow),
+            });
+        }
+
+        if selected.ringmod_depth > 0.01 {
+            let mod_val = if selected.ringmod_square > 0.5 {
+                format!("{:.0} Hz Chopper Stutter", selected.ringmod_freq)
+            } else {
+                format!("{:.0} Hz Ring Modulator", selected.ringmod_freq)
+            };
+            rows.push(SpecRow {
+                key: "Modulation:",
+                val: mod_val,
+                style: Style::default().fg(Color::Magenta),
+            });
+        }
+
+        if selected.bitcrush_bits < 24 || selected.downsample_rate < 48000 {
+            rows.push(SpecRow {
+                key: "Decimator:",
+                val: format!(
+                    "{}-bit / {} Hz Lo-Fi",
+                    selected.bitcrush_bits, selected.downsample_rate
+                ),
+                style: Style::default().fg(Color::Yellow),
+            });
+        }
+
+        if selected.delay_mix > 0.01 {
+            rows.push(SpecRow {
+                key: "Echo/Delay:",
+                val: format!(
+                    "{:.0} ms ({:.0}% wet)",
+                    selected.delay_time * 1000.0,
+                    selected.delay_mix * 100.0
+                ),
+                style: Style::default().fg(Color::LightBlue),
+            });
+        }
+
+        if selected.eq_gain.abs() > 0.1 {
+            rows.push(SpecRow {
+                key: "Tone EQ:",
+                val: format!("{:+.1} dB @ {:.0} Hz", selected.eq_gain, selected.eq_freq),
+                style: Style::default().fg(Color::LightGreen),
+            });
+        }
+
+        if selected.hpf_freq > 30.0 && selected.lpf_freq >= 19000.0 {
+            rows.push(SpecRow {
+                key: "Filter:",
+                val: format!("{:.0} Hz HPF (Rumble Cut)", selected.hpf_freq),
+                style: Style::default().fg(Color::DarkGray),
+            });
+        } else if selected.lpf_freq < 19000.0 && selected.hpf_freq <= 30.0 {
+            rows.push(SpecRow {
+                key: "Filter:",
+                val: format!("{:.0} Hz LPF (Bandwidth Cut)", selected.lpf_freq),
+                style: Style::default().fg(Color::DarkGray),
+            });
+        } else if selected.hpf_freq > 30.0 || selected.lpf_freq < 19000.0 {
+            rows.push(SpecRow {
+                key: "Bandpass:",
+                val: format!("{:.0} Hz – {:.0} Hz", selected.hpf_freq, selected.lpf_freq),
+                style: Style::default().fg(Color::DarkGray),
+            });
+        }
+
+        if selected.flanger_enabled {
+            rows.push(SpecRow {
+                key: "Flanger:",
+                val: format!("{:.2} Hz Space LFO", selected.flanger_rate),
+                style: Style::default().fg(Color::Cyan),
+            });
+        }
+
+        // Shared baseline specs
+        rows.push(SpecRow {
+            key: "Denoise:",
+            val: format!("{:.0} dB (DPDFNet AI)", state.dpdfnet_attenuation),
+            style: Style::default().fg(Color::Green),
+        });
+
+        let boost_val = if is_active {
+            state
+                .presets
+                .iter()
+                .find(|p| p.name.eq_ignore_ascii_case(&state.active_preset_name))
+                .map(|p| p.model_gain_db)
+                .unwrap_or(2.0)
+        } else {
+            selected.model_gain_db
+        };
+        rows.push(SpecRow {
+            key: "Voice Boost:",
+            val: format!("{:+.1} dB", boost_val),
+            style: Style::default().fg(Color::Yellow),
+        });
+
+        let mix_pct = if is_active {
+            state.effect_mix_pct
+        } else {
+            ((1.0 - selected.wet_dry_mix).clamp(0.0, 1.0) * 100.0).round() as u32
+        };
+        rows.push(SpecRow {
+            key: "Effect Mix:",
+            val: format!("{}% Wet", mix_pct),
+            style: Style::default().fg(Color::Cyan),
+        });
+
+        rows.push(SpecRow {
+            key: "Anti-Shout:",
+            val: "Active (-2.0 dBFS Limiter Guard)".to_string(),
+            style: Style::default().fg(Color::Green),
+        });
+    }
+
+    rows
+}
+
 fn render_preset_details(frame: &mut Frame, area: Rect, state: &AppState) {
     let selected = state.selected_preset();
     let is_selected_active = selected
@@ -377,117 +585,137 @@ fn render_preset_details(frame: &mut Frame, area: Rect, state: &AppState) {
 
     let mut lines = Vec::new();
     let inner_w = inner.width as usize;
+    let inner_h = inner.height as usize;
 
-    // Line 1: Minimal status badge & clean description (No duplicate [Natural], no duplicate [VERIFIED], no redundant node string)
-    let mut header_spans = Vec::new();
-    if is_selected_active {
-        header_spans.push(Span::styled(
-            "● ACTIVE",
-            Style::default()
-                .fg(Color::Green)
-                .add_modifier(Modifier::BOLD),
-        ));
-        header_spans.push(Span::raw("  "));
-        let desc_fit = fit_string(&selected.description, inner_w.saturating_sub(12));
-        header_spans.push(Span::styled(desc_fit, Style::default().fg(Color::Gray)));
-    } else {
-        header_spans.push(Span::styled(
-            "○ PREVIEW",
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-        ));
-        header_spans.push(Span::styled(
-            " (Enter to apply)",
-            Style::default().fg(Color::DarkGray),
-        ));
-        header_spans.push(Span::raw("  "));
-        let desc_fit = fit_string(&selected.description, inner_w.saturating_sub(30));
-        header_spans.push(Span::styled(desc_fit, Style::default().fg(Color::Gray)));
-    }
-    lines.push(Line::from(header_spans));
-
-    // Line 2: Pipeline summary graph
-    let stages = selected.stage_pipeline_summary();
-    let stages_joined = stages.join(" ➔ ");
-    lines.push(Line::from(vec![
-        Span::styled(
-            "Pipeline   : ",
-            Style::default()
-                .fg(Color::White)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(
-            fit_string(&stages_joined, inner_w.saturating_sub(13)),
-            Style::default().fg(Color::LightCyan),
-        ),
-    ]));
-
-    // Line 3: DSP Parameters breakdown (shortened names to prevent horizontal parameter overflow)
-    let nonzero = selected.nonzero_params();
-    if nonzero.is_empty() {
-        let clean_param_text = if state.quiet_boost_enabled {
-            format!(
-                "Denoise: {:.0}dB │ Quiet Boost: {:+.0}dB [ON] │ Output: {:+.1}dB",
-                state.dpdfnet_attenuation, state.quiet_boost_db, state.output_gain_db
+    if inner_h <= 6 {
+        // Compact mode (e.g. when embedded spectrograph is active)
+        let state_badge = if is_selected_active {
+            Span::styled(
+                "● ACTIVE",
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
             )
         } else {
-            format!(
-                "Denoise: {:.0}dB │ Quiet Boost: [OFF] │ Output: {:+.1}dB",
-                state.dpdfnet_attenuation, state.output_gain_db
+            Span::styled(
+                "○ PREVIEW",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
             )
         };
         lines.push(Line::from(vec![
             Span::styled(
-                "Parameters : ",
+                &selected.name,
                 Style::default()
-                    .fg(Color::White)
+                    .fg(Color::Cyan)
                     .add_modifier(Modifier::BOLD),
             ),
-            Span::styled(clean_param_text, Style::default().fg(Color::Green)),
-        ]));
-    } else {
-        let mut param_strs = Vec::new();
-        for (param, val) in nonzero {
-            let short_param = match param.as_str() {
-                "Pitch Shift" => "Pitch",
-                "Model Boost" => "Boost",
-                "Presence EQ" => "EQ",
-                "Effect Mix" => "Mix",
-                "Bandpass Filter" => "Filter",
-                "Ring Modulation" => "RingMod",
-                "Tremolo / AM" => "Tremolo",
-                "Tube Distortion" => "Drive",
-                "Bitcrusher" => "Decimator",
-                "Stereo Delay" => "Delay",
-                "DPDFNet Attn" => "Denoise",
-                other => other,
-            };
-            param_strs.push(format!("{}: {}", short_param, val));
-        }
-        lines.push(Line::from(vec![
+            Span::raw("  "),
+            state_badge,
+            Span::raw("  "),
             Span::styled(
-                "Parameters : ",
-                Style::default()
-                    .fg(Color::White)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(
-                fit_string(&param_strs.join(" │ "), inner_w.saturating_sub(13)),
-                Style::default().fg(Color::Cyan),
-            ),
-        ]));
-    }
-
-    // Line 4: Sidetone prompt if sidetone is off and space permits
-    if !state.sidetone_enabled && inner.height >= 5 {
-        lines.push(Line::from(vec![
-            Span::styled("Monitoring : ", Style::default().fg(Color::White)),
-            Span::styled(
-                "Off ('v' to hear mic)",
+                format!("({})", selected.category),
                 Style::default().fg(Color::DarkGray),
             ),
         ]));
+
+        let desc_fit = fit_string(&selected.description, inner_w.saturating_sub(2));
+        lines.push(Line::from(vec![Span::styled(
+            desc_fit,
+            Style::default().fg(Color::Gray),
+        )]));
+
+        let spec_rows = build_preset_spec_rows(selected, is_selected_active, state);
+        let mut key_tags = Vec::new();
+        for r in spec_rows.iter().skip(1).take(4) {
+            key_tags.push(format!(
+                "{}: {}",
+                r.key.trim_end_matches(':'),
+                r.val.split_whitespace().next().unwrap_or(&r.val)
+            ));
+        }
+        lines.push(Line::from(vec![Span::styled(
+            fit_string(&key_tags.join(" │ "), inner_w.saturating_sub(2)),
+            Style::default().fg(Color::Cyan),
+        )]));
+    } else {
+        // Full tabular mode matching user reference TUI
+        // Line 1: Name and Category header
+        lines.push(Line::from(vec![
+            Span::styled(
+                &selected.name,
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw("  "),
+            Span::styled(
+                format!("·  {}", selected.category),
+                Style::default().fg(Color::DarkGray),
+            ),
+        ]));
+
+        let spec_rows = build_preset_spec_rows(selected, is_selected_active, state);
+        // Reserve 1 line for header, and 1 line for description footer
+        let max_specs = inner_h.saturating_sub(2);
+        let key_col_w = 14;
+
+        for r in spec_rows.iter().take(max_specs) {
+            let key_str = format!("{:<width$}", r.key, width = key_col_w);
+            let val_fit = fit_string(&r.val, inner_w.saturating_sub(key_col_w));
+            lines.push(Line::from(vec![
+                Span::styled(key_str, Style::default().fg(Color::LightCyan)),
+                Span::styled(val_fit, r.style),
+            ]));
+        }
+
+        let remaining_lines = inner_h.saturating_sub(lines.len());
+        if remaining_lines >= 3 {
+            lines.push(Line::raw(""));
+            lines.push(Line::from(vec![Span::styled(
+                "Description",
+                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+            )]));
+            let words: Vec<&str> = selected.description.split_whitespace().collect();
+            let mut cur_line = String::new();
+            let mut rendered_desc_lines = 0;
+            let max_desc_lines = remaining_lines - 2;
+
+            for word in words {
+                if cur_line.is_empty() {
+                    cur_line.push_str(word);
+                } else if cur_line.len() + 1 + word.len() <= inner_w {
+                    cur_line.push(' ');
+                    cur_line.push_str(word);
+                } else {
+                    lines.push(Line::from(vec![Span::styled(
+                        cur_line.clone(),
+                        Style::default().fg(Color::Gray),
+                    )]));
+                    rendered_desc_lines += 1;
+                    cur_line = word.to_string();
+                    if rendered_desc_lines >= max_desc_lines {
+                        break;
+                    }
+                }
+            }
+            if !cur_line.is_empty() && rendered_desc_lines < max_desc_lines {
+                lines.push(Line::from(vec![Span::styled(
+                    cur_line,
+                    Style::default().fg(Color::Gray),
+                )]));
+            }
+        } else if remaining_lines >= 1 {
+            let desc_fit = fit_string(&selected.description, inner_w.saturating_sub(14));
+            lines.push(Line::from(vec![
+                Span::styled(
+                    format!("{:<width$}", "Description:", width = key_col_w),
+                    Style::default().fg(Color::DarkGray),
+                ),
+                Span::styled(desc_fit, Style::default().fg(Color::Gray)),
+            ]));
+        }
     }
 
     let p = Paragraph::new(lines);
@@ -750,8 +978,8 @@ fn build_frequency_axis(width: usize) -> String {
 }
 
 fn render_live_controls(frame: &mut Frame, area: Rect, state: &AppState) {
-    let title = if area.width >= 56 {
-        " Live Controls (Shift+j/k to cycle, h/l to adjust) "
+    let title = if area.width >= 60 {
+        " Live Controls (Shift+j/k or Tab to cycle, h/l to adjust) "
     } else {
         " Live Controls (Shift+j/k, h/l) "
     };
