@@ -24,6 +24,10 @@ pub struct LiveSpectrumData {
     pub peak_level: f32,
     /// Overall RMS in dBFS
     pub rms_db: f32,
+    /// Hardware ADC Saturation flag (>= 3 consecutive flat-topped 0 dBFS / +-1.0 samples)
+    pub hw_adc_clipped: bool,
+    /// Digital limiting active (peak >= -2.0 dBFS without hardware ADC clipping)
+    pub digital_limiting: bool,
 }
 
 impl Default for LiveSpectrumData {
@@ -37,6 +41,8 @@ impl Default for LiveSpectrumData {
             waterfall: VecDeque::with_capacity(WATERFALL_HISTORY),
             peak_level: 0.0,
             rms_db: -80.0,
+            hw_adc_clipped: false,
+            digital_limiting: false,
         }
     }
 }
@@ -187,6 +193,8 @@ impl SpectrumAnalyzer {
             waterfall: self.waterfall.clone(),
             peak_level: peak_val,
             rms_db,
+            hw_adc_clipped: false,
+            digital_limiting: false,
         }
     }
 }

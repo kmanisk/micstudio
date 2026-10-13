@@ -116,13 +116,16 @@ fn render_top_bar(frame: &mut Frame, area: Rect, state: &AppState) {
         } else {
             -96.0
         };
-        let is_clipping = peak_db >= -0.5;
+        let is_hw_clip = state.spectrum.hw_adc_clipped;
+        let is_digital_limiting = state.spectrum.digital_limiting || (!is_hw_clip && peak_db >= -2.0);
 
         let mut spans = vec![
             Span::styled("Meter: ", Style::default().fg(Color::White)),
             Span::styled(
                 bar,
-                Style::default().fg(if norm > 8 {
+                Style::default().fg(if is_hw_clip {
+                    Color::Red
+                } else if norm > 8 {
                     Color::Red
                 } else if norm > 5 {
                     Color::Yellow
@@ -136,10 +139,15 @@ fn render_top_bar(frame: &mut Frame, area: Rect, state: &AppState) {
                 Style::default().fg(Color::DarkGray),
             ),
         ];
-        if is_clipping {
+        if is_hw_clip {
             spans.push(Span::styled(
-                " [CLIP]",
+                " [HW ADC CLIP: Lower physical mic volume]",
                 Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+            ));
+        } else if is_digital_limiting {
+            spans.push(Span::styled(
+                " [DIGITAL LIMITING]",
+                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
             ));
         }
         spans
@@ -1137,6 +1145,10 @@ fn render_help_dialog(frame: &mut Frame, area: Rect, state: &AppState) {
         Line::from(vec![
             Span::styled("w              ", key_style),
             Span::styled(": Save current live tweaks to active preset", desc_style),
+        ]),
+        Line::from(vec![
+            Span::styled("F5 / Ctrl+R    ", key_style),
+            Span::styled(": Hot-reload presets.toml definitions from disk", desc_style),
         ]),
         Line::from(vec![
             Span::styled("/              ", key_style),

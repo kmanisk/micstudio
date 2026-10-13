@@ -20,6 +20,8 @@ pub struct AudioTelemetry {
     pub peak_level: f32,
     pub vad_probability: f32,
     pub xruns: u64,
+    pub hw_adc_clipped: bool,
+    pub digital_limiting: bool,
 }
 
 pub struct DspPipeline {

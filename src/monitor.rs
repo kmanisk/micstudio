@@ -11,6 +11,32 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
 use std::thread::{self, JoinHandle};
 
+/// Detects physical hardware ADC clipping (>= 3 consecutive samples >= 0.999 or <= -0.999)
+/// and digital limiting (peak >= 0.794 / -2.0 dBFS without hardware ADC clipping).
+pub fn analyze_clipping(samples: &[f32]) -> (bool, bool) {
+    let mut consecutive = 0;
+    let mut hw_clip = false;
+    let mut max_abs = 0.0f32;
+
+    for &s in samples {
+        let abs = s.abs();
+        if abs > max_abs {
+            max_abs = abs;
+        }
+        if s >= 0.999 || s <= -0.999 {
+            consecutive += 1;
+            if consecutive >= 3 {
+                hw_clip = true;
+            }
+        } else {
+            consecutive = 0;
+        }
+    }
+
+    let digital_limit = !hw_clip && max_abs >= 0.794;
+    (hw_clip, digital_limit)
+}
+
 pub struct MicMonitor {
     running: Arc<AtomicBool>,
     telemetry: Arc<RwLock<AudioTelemetry>>,
@@ -125,6 +151,9 @@ impl MicMonitor {
 
         let mut analyzer = SpectrumAnalyzer::new(48000.0, NUM_BANDS);
         let mut sample_ring: Vec<f32> = Vec::with_capacity(FFT_SIZE * 2);
+        let mut consecutive_clip = 0usize;
+        let mut hw_clip_hold = 0usize;
+        let mut digital_limit_hold = 0usize;
 
         let _listener = stream
             .add_local_listener::<()>()
@@ -150,10 +179,36 @@ impl MicMonitor {
                                 valid_slice[start..end].try_into().unwrap_or([0; 4]);
                             let s = f32::from_ne_bytes(bytes);
                             sample_ring.push(s);
+
+                            // Detect true physical ADC flat-topped clipping (>= 3 consecutive samples saturated at rails)
+                            if s >= 0.999 || s <= -0.999 {
+                                consecutive_clip += 1;
+                                if consecutive_clip >= 3 {
+                                    // 1.5s visual hold (72,000 samples @ 48kHz)
+                                    hw_clip_hold = 72_000;
+                                }
+                            } else {
+                                consecutive_clip = 0;
+                            }
+
+                            if hw_clip_hold > 0 {
+                                hw_clip_hold -= 1;
+                            }
+
+                            // Detect digital peak limiting (-2.0 dBFS / 0.794 ceiling) without hardware saturation
+                            if s.abs() >= 0.794 && hw_clip_hold == 0 {
+                                // 0.8s visual hold (38,400 samples @ 48kHz)
+                                digital_limit_hold = 38_400;
+                            } else if digital_limit_hold > 0 {
+                                digital_limit_hold -= 1;
+                            }
                         }
 
                         while sample_ring.len() >= FFT_SIZE {
-                            let spec_data = analyzer.process(&sample_ring[..FFT_SIZE]);
+                            let mut spec_data = analyzer.process(&sample_ring[..FFT_SIZE]);
+                            spec_data.hw_adc_clipped = hw_clip_hold > 0;
+                            spec_data.digital_limiting = digital_limit_hold > 0;
+
                             if let Ok(mut sp) = spectrum.write() {
                                 *sp = spec_data.clone();
                             }
@@ -161,6 +216,8 @@ impl MicMonitor {
                                 t.input_rms_db = spec_data.rms_db;
                                 t.output_rms_db = spec_data.rms_db;
                                 t.peak_level = spec_data.peak_level;
+                                t.hw_adc_clipped = spec_data.hw_adc_clipped;
+                                t.digital_limiting = spec_data.digital_limiting;
                                 t.vad_probability = if spec_data.rms_db > -35.0 {
                                     0.95
                                 } else if spec_data.rms_db > -50.0 {

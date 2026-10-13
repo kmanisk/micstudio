@@ -178,7 +178,7 @@ impl StutterGate {
     }
 }
 
-/// Studio Vocal Compressor (gentle vocal leveling with upward boost).
+/// Studio Vocal Compressor (gentle vocal leveling with anti-shout dynamic hold protection).
 pub struct Compressor {
     threshold_linear: f32,
     ratio: f32,
@@ -188,16 +188,19 @@ pub struct Compressor {
     boost_threshold: f32,
     boost_linear: f32,
     envelope: f32,
+    hold_samples: usize,
+    hold_counter: usize,
     enabled: bool,
 }
 
 impl Compressor {
     pub fn new(sample_rate: f32) -> Self {
-        // -18 dBFS threshold, 3.5:1 ratio, 15ms attack, 100ms release, +6 dB makeup
+        // -18 dBFS threshold, 3.5:1 ratio, 5ms attack, 120ms hold, 500ms release, +4 dB makeup
         let threshold_db = -18.0f32;
         let makeup_db = 4.0f32;
-        let attack_ms = 15.0f32;
-        let release_ms = 100.0f32;
+        let attack_ms = 5.0f32;
+        let hold_ms = 120.0f32;
+        let release_ms = 500.0f32;
 
         Self {
             threshold_linear: 10.0f32.powf(threshold_db / 20.0),
@@ -208,6 +211,8 @@ impl Compressor {
             boost_threshold: 10.0f32.powf(-50.0 / 20.0), // -50 dBFS
             boost_linear: 10.0f32.powf(6.0 / 20.0),      // +6 dB boost for whisper/soft speech
             envelope: 0.0,
+            hold_samples: (hold_ms * 0.001 * sample_rate) as usize,
+            hold_counter: 0,
             enabled: true,
         }
     }
@@ -226,6 +231,10 @@ impl Compressor {
         if abs_sample > self.envelope {
             self.envelope =
                 self.attack_coeff * self.envelope + (1.0 - self.attack_coeff) * abs_sample;
+            self.hold_counter = self.hold_samples;
+        } else if self.hold_counter > 0 {
+            self.hold_counter -= 1;
+            // Hold peak envelope steady to guard against shouting transients without pumping
         } else {
             self.envelope =
                 self.release_coeff * self.envelope + (1.0 - self.release_coeff) * abs_sample;
@@ -251,6 +260,7 @@ impl Compressor {
 
     pub fn reset(&mut self) {
         self.envelope = 0.0;
+        self.hold_counter = 0;
     }
 }
 

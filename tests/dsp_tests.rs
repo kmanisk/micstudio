@@ -659,3 +659,134 @@ fn test_18_model_voice_boost_default_and_payload() {
     let payload_minus3db = custom.build_props_payload();
     assert!(payload_minus3db.contains("\"limiter:Output gain (G)\" 0.7079"));
 }
+
+#[test]
+fn test_19_anti_shout_compressor_hold_and_attenuation() {
+    use micstudio::dsp::effects::Compressor;
+
+    let sample_rate = 48000.0f32;
+    let mut comp = Compressor::new(sample_rate);
+
+    // 1. Feed quiet speech (~ -24 dBFS / 0.063) -> should pass without aggressive clamping
+    let quiet_sample = 0.063f32;
+    for _ in 0..480 {
+        comp.process(quiet_sample);
+    }
+
+    // 2. Sudden loud shout transient (+0 dBFS / 0.95 amplitude)
+    // Over 5ms (240 samples at 48kHz), envelope must clamp the peak
+    let shout_sample = 0.95f32;
+    let mut last_out = 0.0f32;
+    for _ in 0..240 {
+        last_out = comp.process(shout_sample);
+    }
+    // With ratio 3.5:1 and threshold -18 dBFS, output of 0.95 should be significantly attenuated
+    assert!(
+        last_out < shout_sample,
+        "Compressor must attenuate sudden loud shout transient (in: {}, out: {})",
+        shout_sample,
+        last_out
+    );
+
+    // 3. Hold test: Drop signal back to soft level, verify hold keeps envelope from decaying immediately for 120ms (5760 samples)
+    let soft_sample = 0.1f32;
+    let out_at_drop = comp.process(soft_sample);
+    // After 60ms (2880 samples < 120ms hold), envelope should still be held
+    for _ in 0..2880 {
+        last_out = comp.process(soft_sample);
+    }
+    assert!(
+        (last_out - out_at_drop).abs() < 0.05,
+        "Compressor must hold envelope steady during 120ms hold window"
+    );
+}
+
+#[test]
+fn test_20_hardware_adc_clipping_detection_vs_digital_limiting() {
+    use micstudio::monitor::analyze_clipping;
+
+    // Case 1: Pristine speech (amplitude 0.3 / -10 dBFS)
+    let normal_speech = vec![0.3f32; 1024];
+    let (hw_clip, digital_limit) = analyze_clipping(&normal_speech);
+    assert!(!hw_clip, "Normal speech must not trigger hardware ADC clip");
+    assert!(!digital_limit, "Normal speech must not trigger digital limiting");
+
+    // Case 2: Digital brickwall limited signal (0.85 amplitude / -1.4 dBFS)
+    // Exceeds -2 dBFS digital limiter threshold (0.794) but is not rail-saturated
+    let limited_signal = vec![0.85f32; 1024];
+    let (hw_clip, digital_limit) = analyze_clipping(&limited_signal);
+    assert!(!hw_clip, "Digital limiting must NOT report false hardware ADC clip");
+    assert!(digital_limit, "Signal >= 0.794 must report digital limiting");
+
+    // Case 3: Transient isolated peak (1 or 2 isolated 1.0 samples) -> not flat-topped saturation
+    let mut transient_peaks = vec![0.5f32; 1024];
+    transient_peaks[10] = 1.0;
+    transient_peaks[20] = -1.0;
+    transient_peaks[21] = -1.0; // only 2 consecutive
+    let (hw_clip, _) = analyze_clipping(&transient_peaks);
+    assert!(!hw_clip, "Isolated 1-2 sample peaks must not trigger hardware ADC saturation");
+
+    // Case 4: True physical hardware ADC flat-topped clipping (>= 3 consecutive rail samples >= 0.999)
+    let mut saturated = vec![0.5f32; 1024];
+    saturated[50] = 1.0;
+    saturated[51] = 1.0;
+    saturated[52] = 1.0; // 3 consecutive flat-topped samples!
+    let (hw_clip, digital_limit) = analyze_clipping(&saturated);
+    assert!(hw_clip, ">= 3 flat-topped rail samples must honestly trigger [HW ADC CLIP]");
+    assert!(!digital_limit, "Hardware ADC clipping takes precedence over digital limiting");
+}
+
+#[test]
+fn test_21_quiet_voice_boost_isolation_to_natural_clean() {
+    use micstudio::config::CleanMicSettings;
+    use micstudio::presets::PresetManager;
+
+    let mgr = PresetManager::new().unwrap();
+    let clean = mgr.find_preset("Natural Clean").unwrap();
+    let mut cfg = CleanMicSettings::default();
+    cfg.quiet_voice_boost_enabled = true;
+    cfg.quiet_voice_boost_db = 4.0;
+
+    // Natural clean payload with +4 dB quiet boost has lifted makeup gain (2.2387)
+    let clean_payload = clean.build_props_payload_with_clean(&cfg);
+    assert!(
+        clean_payload.contains("\"compressor:Makeup gain (G)\" 2.238721"),
+        "Natural Clean with +4 dB quiet boost must have makeup gain 2.238721"
+    );
+
+    // Creative models must ALWAYS isolate and disable quiet voice boost (makeup gain 1.000000)
+    for p in mgr.all_presets() {
+        if p.name.eq_ignore_ascii_case("Natural Clean") {
+            continue;
+        }
+        let payload = p.build_props_payload_with_clean(&cfg);
+        assert!(
+            payload.contains("\"compressor:Makeup gain (G)\" 1.000000"),
+            "Creative preset '{}' must have makeup gain 1.000000 (quiet boost isolated)",
+            p.name
+        );
+        assert!(
+            payload.contains("\"compressor:Hold time (ms)\" 120.0"),
+            "Preset '{}' must configure 120ms anti-shout hold time",
+            p.name
+        );
+        assert!(
+            payload.contains("\"compressor:Attack time (ms)\" 5.0"),
+            "Preset '{}' must configure 5ms anti-shout attack time",
+            p.name
+        );
+    }
+}
+
+#[test]
+fn test_22_preset_manager_reload_from_disk() {
+    use micstudio::presets::PresetManager;
+
+    let mut mgr = PresetManager::new().unwrap();
+    let count_before = mgr.all_presets().len();
+    assert!(count_before >= 20);
+
+    // Reload from disk
+    assert!(mgr.reload_from_disk().is_ok());
+    assert_eq!(mgr.all_presets().len(), count_before);
+}

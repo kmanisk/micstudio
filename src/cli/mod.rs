@@ -2,7 +2,7 @@
 
 use crate::config::CleanMicSettings;
 use crate::ipc::{IpcRequest, is_engine_running, send_command};
-use crate::presets::{Preset, PresetManager};
+use crate::presets::PresetManager;
 use crate::speaker::{SpeakerDsp, SpeakerVoicing};
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
@@ -134,6 +134,8 @@ pub enum PresetAction {
     Save { name: String },
     /// Delete a user preset
     Delete { name: String },
+    /// Hot-reload presets from presets.toml without restarting
+    Reload,
 }
 
 #[derive(Subcommand)]
@@ -209,6 +211,7 @@ pub fn handle_cli(cli: Cli) -> Result<()> {
         Some(Commands::Preset { action }) => match action {
             PresetAction::Save { name } => save_preset(&name),
             PresetAction::Delete { name } => delete_preset(&name),
+            PresetAction::Reload => reload_presets_cli(),
         },
         Some(Commands::Noise { action }) => handle_noise(action),
         Some(Commands::Gate { action }) => handle_gate(action),
@@ -262,20 +265,14 @@ pub fn show_status() -> Result<()> {
     let def_source = get_default_source()?;
     println!("Default PipeWire Source : {}", def_source);
 
-    let clean_node = get_node_id("ghelper-audio")?;
+    let unified_node = get_node_id("ghelper-audio")?;
     println!(
-        "Clean Node (DPDFNet)    : {} (ghelper-audio)",
-        clean_node.unwrap_or_else(|| "Not Found".to_string())
-    );
-
-    let fx_node = get_node_id("ghelper-audio-fx")?;
-    println!(
-        "Voice FX Node           : {} (ghelper-audio-fx)",
-        fx_node.unwrap_or_else(|| "Not Found".to_string())
+        "Unified MicStudio Source: {} (ghelper-audio)",
+        unified_node.unwrap_or_else(|| "Not Found".to_string())
     );
 
     let cfg = CleanMicSettings::load();
-    println!("--- Microphone DSP Stage 1 (DPDFNet & Clean Leveling) ---");
+    println!("--- Microphone DSP (Unified DPDFNet, FX & Anti-Shout Guard) ---");
     println!(
         "DPDFNet Attenuation     : {:.1} dB",
         cfg.dpdfnet_attenuation_db
@@ -285,12 +282,15 @@ pub fn show_status() -> Result<()> {
         "Quiet Voice Boost       : {}",
         if cfg.quiet_voice_boost_enabled {
             format!(
-                "{:+.1} dB [ON] (threshold lowered, gentle leveling)",
+                "{:+.1} dB [ON] (Natural Clean speech leveling)",
                 cfg.quiet_voice_boost_db
             )
         } else {
             "[OFF] +0 dB (pristine clean baseline)".to_string()
         }
+    );
+    println!(
+        "Anti-Shout Protection   : [ON] (5ms attack, 120ms hold, 500ms release, -2 dBFS ceiling)"
     );
     println!(
         "Sidetone Monitor        : {}",
@@ -309,6 +309,15 @@ pub fn show_status() -> Result<()> {
             );
         }
     }
+    Ok(())
+}
+
+fn reload_presets_cli() -> Result<()> {
+    let mut mgr = PresetManager::new()?;
+    mgr.reload_from_disk()?;
+    let active = mgr.active_preset_name().to_string();
+    let _ = apply_voice_silent(&active);
+    println!("Reloaded {} presets from disk. Active preset: '{}'", mgr.all_presets().len(), active);
     Ok(())
 }
 
@@ -655,92 +664,54 @@ pub fn apply_voice_internal(preset_name: &str, verbose: bool) -> Result<String> 
 
     let is_clean = preset.name.eq_ignore_ascii_case("Natural Clean");
 
-    // Dynamically update DPDFNet attenuation on capture.ghelper-audio tailored for this preset
+    // Atomically apply entire unified DSP parameter set (DPDFNet, FX, Clean EQ, Anti-Shout Compressor, Limiter) to capture.ghelper-audio
     if let Some(clean_cap_id) = get_node_id("capture.ghelper-audio")? {
-        let atten = preset.dpdfnet_attenuation_db;
-        let props = format!(
-            "{{ params = [ \"dpdfnet:Attenuation Limit (dB)\" {:.1} ] }}",
-            atten
-        );
+        let props_payload = preset.build_props_payload();
         let _ = Command::new("pw-cli")
-            .args(["s", &clean_cap_id, "Props", &props])
+            .args(["s", &clean_cap_id, "Props", &props_payload])
             .output();
     }
+
+    // Ensure default source is ghelper-audio (unified published source)
+    if let Some(id) = get_node_id("ghelper-audio")? {
+        let _ = Command::new("wpctl").args(["set-default", &id]).output();
+    }
+
+    mgr.set_active_preset(&preset.name)?;
     let mut cfg = CleanMicSettings::load();
     cfg.dpdfnet_attenuation_db = preset.dpdfnet_attenuation_db;
     let _ = cfg.save();
+    CleanMicSettings::sync_hear_voice(cfg.hear_voice);
 
-    if is_clean {
-        // Apply quiet voice boost / speech leveling on clean mic if enabled
-        let _ = cfg.apply_dsp_params();
+    let boost_info = if !is_clean && preset.model_gain_db.abs() > 0.01 {
+        format!(", Boost: {:+.1} dB", preset.model_gain_db)
+    } else {
+        String::new()
+    };
+    let quiet_info = if is_clean && cfg.quiet_voice_boost_enabled {
+        format!(", Quiet Boost: {:+.0} dB", cfg.quiet_voice_boost_db)
+    } else {
+        String::new()
+    };
 
-        if let Some(fx_cap_id) = get_node_id("capture.ghelper-audio-fx")? {
-            let props_payload = Preset::default().build_props_payload();
-            let _ = Command::new("pw-cli")
-                .args(["s", &fx_cap_id, "Props", &props_payload])
-                .output();
-        }
-        if let Some(id) = get_node_id("ghelper-audio")? {
-            let _ = Command::new("wpctl").args(["set-default", &id]).output();
-        }
-        mgr.set_active_preset(&preset.name)?;
-        let cfg = CleanMicSettings::load();
-        CleanMicSettings::sync_hear_voice_with_source(cfg.hear_voice, false);
-        let quiet_info = if cfg.quiet_voice_boost_enabled {
-            format!(", Quiet Boost: {:+.0} dB", cfg.quiet_voice_boost_db)
-        } else {
-            String::new()
-        };
-        if verbose {
+    if verbose {
+        if is_clean {
             println!(
                 "Switched default source to clean microphone (ghelper-audio). DPDFNet: {:.0} dB{}",
                 preset.dpdfnet_attenuation_db, quiet_info
             );
-        }
-        Ok(format!(
-            "Natural Clean active (ghelper-audio, DPDFNet {:.0} dB{})",
-            preset.dpdfnet_attenuation_db, quiet_info
-        ))
-    } else {
-        // Apply Quiet Voice Boost (if enabled) on capture.ghelper-audio so quiet speech leveling benefits ALL models!
-        let _ = cfg.apply_dsp_params();
-
-        // Set all 10 LADSPA stages on capture.ghelper-audio-fx atomically (including model volume boost)
-        if let Some(fx_cap_id) = get_node_id("capture.ghelper-audio-fx")? {
-            let props_payload = preset.build_props_payload();
-            let _ = Command::new("pw-cli")
-                .args(["s", &fx_cap_id, "Props", &props_payload])
-                .output();
-        }
-
-        // Set default source to ghelper-audio-fx
-        if let Some(id) = get_node_id("ghelper-audio-fx")? {
-            let _ = Command::new("wpctl").args(["set-default", &id]).output();
-        }
-        mgr.set_active_preset(&preset.name)?;
-        let cfg = CleanMicSettings::load();
-        CleanMicSettings::sync_hear_voice_with_source(cfg.hear_voice, true);
-        let boost_info = if preset.model_gain_db.abs() > 0.01 {
-            format!(", Boost: {:+.1} dB", preset.model_gain_db)
         } else {
-            String::new()
-        };
-        let quiet_info = if cfg.quiet_voice_boost_enabled {
-            format!(", Quiet Boost: {:+.0} dB", cfg.quiet_voice_boost_db)
-        } else {
-            String::new()
-        };
-        if verbose {
             println!(
-                "Applied preset '{}' to voice FX engine (ghelper-audio-fx). DPDFNet: {:.0} dB{}{}",
+                "Applied preset '{}' to unified microphone (ghelper-audio). DPDFNet: {:.0} dB{}{}",
                 preset.name, preset.dpdfnet_attenuation_db, boost_info, quiet_info
             );
         }
-        Ok(format!(
-            "Preset '{}' active (ghelper-audio-fx, DPDFNet {:.0} dB{}{})",
-            preset.name, preset.dpdfnet_attenuation_db, boost_info, quiet_info
-        ))
     }
+
+    Ok(format!(
+        "Preset '{}' active on unified microphone (ghelper-audio, DPDFNet {:.0} dB{}{})",
+        preset.name, preset.dpdfnet_attenuation_db, boost_info, quiet_info
+    ))
 }
 
 pub fn apply_voice(preset_name: &str) -> Result<()> {

@@ -151,7 +151,7 @@ impl CleanMicSettings {
             };
 
         let props_payload = format!(
-            "{{ params = [ \"dpdfnet:Attenuation Limit (dB)\" {:.1}, \"compressor:Output gain (G)\" {:.4}, \"compressor:Attack threshold (G)\" {:.6}, \"compressor:Makeup gain (G)\" {:.6} ] }}",
+            "{{ params = [ \"dpdfnet:Attenuation Limit (dB)\" {:.1}, \"limiter:Output gain (G)\" {:.4}, \"compressor:Attack threshold (G)\" {:.6}, \"compressor:Makeup gain (G)\" {:.6}, \"compressor:Attack time (ms)\" 5.0, \"compressor:Hold time (ms)\" 120.0, \"compressor:Release time (ms)\" 500.0, \"compressor:Ratio\" 2.0 ] }}",
             atten, linear_gain, thresh_linear, makeup_linear
         );
 
@@ -174,7 +174,7 @@ impl CleanMicSettings {
         let linear_gain = 10.0f32.powf(cfg.output_gain_db / 20.0);
 
         let props_payload = format!(
-            "{{ params = [ \"dpdfnet:Attenuation Limit (dB)\" {:.1}, \"compressor:Output gain (G)\" {:.4}, \"compressor:Attack threshold (G)\" 0.251189, \"compressor:Makeup gain (G)\" 1.412538 ] }}",
+            "{{ params = [ \"dpdfnet:Attenuation Limit (dB)\" {:.1}, \"limiter:Output gain (G)\" {:.4}, \"compressor:Attack threshold (G)\" 0.251189, \"compressor:Makeup gain (G)\" 1.000000, \"compressor:Attack time (ms)\" 5.0, \"compressor:Hold time (ms)\" 120.0, \"compressor:Release time (ms)\" 500.0, \"compressor:Ratio\" 2.5 ] }}",
             atten, linear_gain
         );
 
@@ -196,7 +196,7 @@ impl CleanMicSettings {
         Self::sync_hear_voice_with_source(enable, is_voice_fx_active());
     }
 
-    pub fn sync_hear_voice_with_source(enable: bool, fx_active: bool) {
+    pub fn sync_hear_voice_with_source(enable: bool, _fx_active: bool) {
         // Disconnect any existing monitor links from both sources
         disconnect_monitor_links("ghelper-audio:capture_MONO");
         disconnect_monitor_links("ghelper-audio-fx:capture_MONO");
@@ -205,12 +205,8 @@ impl CleanMicSettings {
             return;
         }
 
-        // Determine active monitor source: if FX is active, monitor the FX mic, otherwise clean mic
-        let monitor_source = if fx_active {
-            "ghelper-audio-fx:capture_MONO"
-        } else {
-            "ghelper-audio:capture_MONO"
-        };
+        // In unified single-device architecture, ghelper-audio provides both clean and active voice FX
+        let monitor_source = "ghelper-audio:capture_MONO";
 
         // Query active default sink
         let sink_out = Command::new("pactl").arg("get-default-sink").output();
@@ -234,12 +230,8 @@ impl CleanMicSettings {
 }
 
 pub fn is_voice_fx_active() -> bool {
-    let output = Command::new("wpctl")
-        .args(["inspect", "@DEFAULT_AUDIO_SOURCE@"])
-        .output();
-    if let Ok(out) = output {
-        let text = String::from_utf8_lossy(&out.stdout);
-        return text.contains("ghelper-audio-fx");
+    if let Ok(mgr) = crate::presets::PresetManager::new() {
+        return !mgr.active_preset_name().eq_ignore_ascii_case("Natural Clean");
     }
     false
 }

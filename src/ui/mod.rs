@@ -155,6 +155,14 @@ fn run_event_loop_with_state(
                     (KeyCode::Char('p'), _) => {
                         state.trigger_audition();
                     }
+                    (KeyCode::F(5), _) => {
+                        let _ = state.reload_presets();
+                        monitor.restart();
+                    }
+                    (KeyCode::Char('r'), KeyModifiers::CONTROL) => {
+                        let _ = state.reload_presets();
+                        monitor.restart();
+                    }
                     (KeyCode::Char('r'), _) => {
                         let _ = state.reset_selected_preset();
                     }

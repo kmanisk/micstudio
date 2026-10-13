@@ -500,6 +500,27 @@ impl AppState {
         Ok(())
     }
 
+    pub fn reload_presets(&mut self) -> Result<()> {
+        let mut mgr = PresetManager::new()?;
+        mgr.reload_from_disk()?;
+        self.presets = mgr.all_presets().to_vec();
+        let active_name = mgr.active_preset_name().to_string();
+        self.active_preset_name = active_name.clone();
+        let indices = self.filtered_indices();
+        for (i, &idx) in indices.iter().enumerate() {
+            if self.presets[idx].name.eq_ignore_ascii_case(&active_name) {
+                self.cursor = i;
+                break;
+            }
+        }
+        let _ = self.apply_selected();
+        self.set_status(format!(
+            "Reloaded {} presets from disk.",
+            self.presets.len()
+        ));
+        Ok(())
+    }
+
     pub fn trigger_audition(&mut self) {
         if self.audition_running.load(Ordering::SeqCst) {
             self.set_status("Audition already running...".to_string());
@@ -508,14 +529,7 @@ impl AppState {
 
         let is_running = self.audition_running.clone();
         let status_arc = self.audition_status.clone();
-        let active_is_clean = self
-            .active_preset_name
-            .eq_ignore_ascii_case("Natural Clean");
-        let source_node = if active_is_clean {
-            "ghelper-audio"
-        } else {
-            "ghelper-audio-fx"
-        };
+        let source_node = "ghelper-audio";
 
         is_running.store(true, Ordering::SeqCst);
         if let Ok(mut g) = status_arc.lock() {

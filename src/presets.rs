@@ -216,8 +216,14 @@ impl Default for Preset {
 }
 
 impl Preset {
-    /// Generate the live pw-cli Props payload string to apply this preset to capture.ghelper-audio-fx
+    /// Generate the live pw-cli Props payload string to apply this preset to capture.ghelper-audio
     pub fn build_props_payload(&self) -> String {
+        let clean_cfg = crate::config::CleanMicSettings::load();
+        self.build_props_payload_with_clean(&clean_cfg)
+    }
+
+    /// Generate the live pw-cli Props payload with explicit CleanMicSettings
+    pub fn build_props_payload_with_clean(&self, clean_cfg: &crate::config::CleanMicSettings) -> String {
         let pitch_mix = if self.pitch_semitones.abs() < 0.01 && !self.formant_preserving {
             1.0 // dry
         } else {
@@ -242,10 +248,48 @@ impl Preset {
         };
         let square_level = if self.ringmod_square > 0.01 { 1.0 } else { 0.0 };
         let sine_level = if square_level > 0.5 { 0.0 } else { 1.0 };
-        let model_gain_linear = 10.0f32.powf(self.model_gain_db / 20.0);
+
+        let is_clean = self.name.eq_ignore_ascii_case("Natural Clean");
+
+        // Clean Broadcast EQ cascade: active on Natural Clean, flat 0.0 dB on creative presets
+        let (eq_80_gain, eq_400_gain, eq_3k5_gain) = if is_clean {
+            (-2.0f32, -1.5f32, 1.5f32)
+        } else {
+            (0.0f32, 0.0f32, 0.0f32)
+        };
+
+        // Anti-Shout Compressor settings:
+        // 5ms attack, 120ms hold, 500ms release, soft knee
+        let (thresh_linear, makeup_linear, ratio) = if is_clean {
+            if clean_cfg.quiet_voice_boost_enabled && clean_cfg.quiet_voice_boost_db > 0.01 {
+                let boost = clean_cfg.quiet_voice_boost_db.clamp(0.0, 10.0);
+                let thresh_db = (-12.0 - (boost * 1.5)).clamp(-24.0, -12.0);
+                let makeup_db = (3.0 + boost).clamp(3.0, 12.0);
+                (
+                    10.0f32.powf(thresh_db / 20.0),
+                    10.0f32.powf(makeup_db / 20.0),
+                    2.0f32,
+                )
+            } else {
+                (0.251189f32, 1.412538f32, 2.0f32) // -12 dBFS threshold, +3 dB makeup
+            }
+        } else {
+            // Creative models: quiet voice boost is strictly isolated to clean!
+            // Baseline 0 dB makeup gain, model boost handled at limiter
+            (0.251189f32, 1.000000f32, 2.5f32)
+        };
+
+        // Output limiter gain: includes model volume boost + user output gain
+        let user_gain_linear = 10.0f32.powf(clean_cfg.output_gain_db / 20.0);
+        let model_gain_linear = if is_clean {
+            user_gain_linear
+        } else {
+            10.0f32.powf(self.model_gain_db / 20.0) * user_gain_linear
+        };
 
         format!(
             "{{ params = [ \
+                \"dpdfnet:Attenuation Limit (dB)\" {:.1}, \
                 \"pitch_shifter:Semitones\" {:.1}, \
                 \"pitch_shifter:Formant Preserving\" {:.1}, \
                 \"pitch_shifter:Wet-Dry Mix\" {:.1}, \
@@ -264,8 +308,18 @@ impl Preset {
                 \"eq_lpf:Freq\" {:.1}, \
                 \"eq_peak:Freq\" {:.1}, \
                 \"eq_peak:Gain\" {:.1}, \
+                \"eq_80:Gain\" {:.1}, \
+                \"eq_400:Gain\" {:.1}, \
+                \"eq_3k5:Gain\" {:.1}, \
+                \"compressor:Attack threshold (G)\" {:.6}, \
+                \"compressor:Makeup gain (G)\" {:.6}, \
+                \"compressor:Ratio\" {:.1}, \
+                \"compressor:Attack time (ms)\" 5.0, \
+                \"compressor:Hold time (ms)\" 120.0, \
+                \"compressor:Release time (ms)\" 500.0, \
                 \"limiter:Output gain (G)\" {:.4} \
             ] }}",
+            self.dpdfnet_attenuation_db,
             self.pitch_semitones,
             formant_val,
             pitch_mix,
@@ -284,6 +338,12 @@ impl Preset {
             self.lpf_freq,
             self.eq_freq,
             self.eq_gain,
+            eq_80_gain,
+            eq_400_gain,
+            eq_3k5_gain,
+            thresh_linear,
+            makeup_linear,
+            ratio,
             model_gain_linear
         )
     }
@@ -874,6 +934,11 @@ impl PresetManager {
         };
         mgr.load()?;
         Ok(mgr)
+    }
+
+    /// Reread presets.toml and verified status from disk without restarting application
+    pub fn reload_from_disk(&mut self) -> Result<()> {
+        self.load()
     }
 
     pub fn all_presets(&self) -> &[Preset] {
