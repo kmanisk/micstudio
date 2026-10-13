@@ -406,20 +406,24 @@ fn test_tui_pipeline_graph_and_preset_details() {
     }
 
     assert!(
-        content.contains("Pitch:"),
-        "Pitch spec row missing in details pane"
-    );
-    assert!(
-        content.contains("Denoise:"),
-        "Denoise spec row missing in details pane"
+        content.contains("Description"),
+        "Description title missing in right pane"
     );
     assert!(
         content.contains("Active"),
         "Active status missing for active preset"
     );
     assert!(
-        content.contains("Model details"),
-        "Model details modal hint missing"
+        content.contains("baritone"),
+        "Voice description text missing in right pane"
+    );
+    assert!(
+        content.contains("details"),
+        "Details shortcut missing from bottom bar"
+    );
+    assert!(
+        content.contains("apply"),
+        "Apply shortcut missing from bottom bar"
     );
     assert!(
         content.contains("reset"),
@@ -443,5 +447,7 @@ fn test_tui_pipeline_graph_and_preset_details() {
     }
     assert!(modal_content.contains("Model Details & Chain"));
     assert!(modal_content.contains("State:"));
+    assert!(modal_content.contains("Pitch:"));
+    assert!(modal_content.contains("Denoise:"));
     assert!(modal_content.contains("Chain:"));
 }

@@ -6,7 +6,7 @@ use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, Paragraph},
+    widgets::{Block, Borders, Clear, Paragraph, Wrap},
 };
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
@@ -148,16 +148,6 @@ fn render_top_bar(frame: &mut Frame, area: Rect, state: &AppState) {
         Span::raw(" │ "),
     ];
     spans.extend(meter_spans);
-
-    if let Some(msg) = state.active_status() {
-        spans.push(Span::raw(" │ "));
-        spans.push(Span::styled(
-            fit_string(&format!("● {}", msg), 38),
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-        ));
-    }
 
     let line = Line::from(spans);
     let p = Paragraph::new(line);
@@ -555,9 +545,23 @@ fn render_preset_details(frame: &mut Frame, area: Rect, state: &AppState) {
     let is_selected_active = selected
         .name
         .eq_ignore_ascii_case(&state.active_preset_name);
-    let title = " Details ".to_string();
 
-    let block = Block::default().borders(Borders::ALL).title(title);
+    let title = if is_selected_active {
+        " Description [Active] ".to_string()
+    } else {
+        " Description ".to_string()
+    };
+
+    let border_style = if is_selected_active {
+        Style::default().fg(Color::Green)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    };
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(title)
+        .border_style(border_style);
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
@@ -565,87 +569,9 @@ fn render_preset_details(frame: &mut Frame, area: Rect, state: &AppState) {
         return;
     }
 
-    let mut lines = Vec::new();
-    let inner_w = inner.width as usize;
-
-    // Line 1: Active status + compact audio parameters
-    let state_badge = if is_selected_active {
-        Span::styled(
-            "● Active",
-            Style::default()
-                .fg(Color::Green)
-                .add_modifier(Modifier::BOLD),
-        )
-    } else {
-        Span::styled("○ Inactive", Style::default().fg(Color::DarkGray))
-    };
-
-    // Compact audio parameters
-    let spec_tags = if selected.name.eq_ignore_ascii_case("Natural Clean") {
-        let boost_str = if state.quiet_boost_enabled {
-            format!("Boost: {:+.0} dB [ON]", state.quiet_boost_db)
-        } else {
-            "Boost: OFF".to_string()
-        };
-        format!(
-            "Denoise: {:.0} dB │ {} │ Gain: {:+.1} dB │ Anti-Shout: Active",
-            state.dpdfnet_attenuation, boost_str, state.output_gain_db
-        )
-    } else {
-        let mut parts = Vec::new();
-        if selected.pitch_semitones.abs() > 0.01 {
-            parts.push(format!("Pitch: {:+.1} st", selected.pitch_semitones));
-        }
-        parts.push(format!("Boost: {:+.1} dB", selected.model_gain_db));
-        parts.push(format!("Denoise: {:.0} dB", state.dpdfnet_attenuation));
-        let mix_pct = if is_selected_active {
-            state.effect_mix_pct
-        } else {
-            ((1.0 - selected.wet_dry_mix).clamp(0.0, 1.0) * 100.0).round() as u32
-        };
-        parts.push(format!("Mix: {}%", mix_pct));
-        parts.push("Anti-Shout: Active".to_string());
-        parts.join(" │ ")
-    };
-
-    lines.push(Line::from(vec![
-        state_badge,
-        Span::styled("  │  ", Style::default().fg(Color::DarkGray)),
-        Span::styled(
-            fit_string(&spec_tags, inner_w.saturating_sub(14)),
-            Style::default().fg(Color::White),
-        ),
-    ]));
-
-    // Line 2: Blank separator if space permits
-    if inner.height >= 4 {
-        lines.push(Line::raw(""));
-    }
-
-    // Line 4: Clean actionable prompt
-    if inner.height >= 4 {
-        lines.push(Line::from(vec![
-            Span::styled(
-                "[Space] ",
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(
-                "Model details & DSP chain modal   ",
-                Style::default().fg(Color::DarkGray),
-            ),
-            Span::styled(
-                "[Enter] ",
-                Style::default()
-                    .fg(Color::White)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled("Apply", Style::default().fg(Color::DarkGray)),
-        ]));
-    }
-
-    let p = Paragraph::new(lines);
+    let p = Paragraph::new(selected.description.as_str())
+        .wrap(Wrap { trim: true })
+        .style(Style::default().fg(Color::White));
     frame.render_widget(p, inner);
 }
 

@@ -395,7 +395,7 @@ impl AppState {
         let atten = self.selected_preset().dpdfnet_attenuation_db;
         let wet_dry = self.selected_preset().wet_dry_mix;
         let mix_pct = ((1.0 - wet_dry).clamp(0.0, 1.0) * 100.0).round() as u32;
-        let msg = crate::cli::apply_voice_internal(&name, false)?;
+        let _ = crate::cli::apply_voice_internal(&name, false)?;
         self.active_preset_name = name;
         self.dpdfnet_attenuation = atten;
         self.effect_mix_pct = mix_pct;
@@ -403,7 +403,6 @@ impl AppState {
         self.quiet_boost_enabled = cfg.quiet_voice_boost_enabled;
         self.quiet_boost_db = cfg.quiet_voice_boost_db;
         self.output_gain_db = cfg.output_gain_db;
-        self.set_status(msg);
         Ok(())
     }
 
@@ -414,7 +413,7 @@ impl AppState {
             cfg.quiet_voice_boost_db = 4.0;
             let _ = cfg.save();
         }
-        let msg = crate::cli::apply_voice_internal("Natural Clean", false)?;
+        let _ = crate::cli::apply_voice_internal("Natural Clean", false)?;
         self.active_preset_name = "Natural Clean".to_string();
         self.dpdfnet_attenuation = cfg.dpdfnet_attenuation_db;
         self.output_gain_db = cfg.output_gain_db;
@@ -428,7 +427,6 @@ impl AppState {
                 break;
             }
         }
-        self.set_status(msg);
         Ok(())
     }
 
