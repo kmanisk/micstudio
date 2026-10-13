@@ -163,6 +163,9 @@ fn run_event_loop_with_state(
                         let _ = state.reload_presets();
                         monitor.restart();
                     }
+                    (KeyCode::Char('R'), _) => {
+                        let _ = state.reset_all_to_factory();
+                    }
                     (KeyCode::Char('r'), _) => {
                         let _ = state.reset_selected_preset();
                     }

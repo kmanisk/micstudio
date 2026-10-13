@@ -479,13 +479,53 @@ impl AppState {
         let mut mgr = PresetManager::new()?;
         if mgr.reset_preset(&name)? {
             self.presets = mgr.all_presets().to_vec();
-            if self.active_preset_name.eq_ignore_ascii_case(&name) {
-                let _ = self.apply_selected();
+            if let Some(reset_p) = self
+                .presets
+                .iter()
+                .find(|p| p.name.eq_ignore_ascii_case(&name))
+                .cloned()
+            {
+                if self.active_preset_name.eq_ignore_ascii_case(&name) {
+                    self.dpdfnet_attenuation = reset_p.dpdfnet_attenuation_db;
+                    let wet_dry = reset_p.wet_dry_mix;
+                    self.effect_mix_pct =
+                        ((1.0 - wet_dry).clamp(0.0, 1.0) * 100.0).round() as u32;
+                    let _ = self.apply_selected();
+                }
+                self.set_status(format!(
+                    "Reset '{}' to factory defaults (Boost: {:+.1}dB, DPDFNet: {:.0}dB)",
+                    name, reset_p.model_gain_db, reset_p.dpdfnet_attenuation_db
+                ));
             }
-            self.set_status(format!("Reset '{}' to factory defaults.", name));
         } else {
             self.set_status(format!("Cannot reset '{}': not a factory preset.", name));
         }
+        Ok(())
+    }
+
+    pub fn reset_all_to_factory(&mut self) -> Result<()> {
+        let mut cfg = CleanMicSettings::default();
+        cfg.quiet_voice_boost_enabled = true;
+        cfg.quiet_voice_boost_db = 4.0;
+        cfg.dpdfnet_attenuation_db = 45.0;
+        cfg.output_gain_db = 0.0;
+        cfg.apply_dsp_params()?;
+        cfg.save()?;
+
+        let mut mgr = PresetManager::new()?;
+        mgr.reset_all_presets()?;
+        self.presets = mgr.all_presets().to_vec();
+
+        self.dpdfnet_attenuation = 45.0;
+        self.output_gain_db = 0.0;
+        self.quiet_boost_db = 4.0;
+        self.quiet_boost_enabled = true;
+        self.effect_mix_pct = 100;
+
+        let _ = crate::cli::apply_voice_internal(&self.active_preset_name, false);
+        self.set_status(
+            "Reset ALL 27 presets & clean mic to factory defaults.".to_string(),
+        );
         Ok(())
     }
 

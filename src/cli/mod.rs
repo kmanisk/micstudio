@@ -26,8 +26,11 @@ pub enum Commands {
     List,
     /// Switch to the native clean broadcast microphone and stop optional FX
     Clean,
-    /// Reset microphone and Natural Clean to factory baseline (DPDFNet 45dB, Quiet Boost ON +4dB)
-    Reset,
+    /// Reset voice presets to factory baseline (usage: 'mic reset [all|<preset_name>]')
+    Reset {
+        /// Target to reset: 'all' (all 27 presets), preset name (e.g. 'Deep Voice'), or omit for Natural Clean
+        target: Option<String>,
+    },
     /// Manage voice effects
     Voice {
         /// Preset name to apply, or 'off' to disable voice FX
@@ -203,7 +206,7 @@ pub fn handle_cli(cli: Cli) -> Result<()> {
         Some(Commands::Status) => show_status(),
         Some(Commands::List) => list_presets(),
         Some(Commands::Clean) => set_clean(),
-        Some(Commands::Reset) => reset_clean_baseline(),
+        Some(Commands::Reset { target }) => handle_reset_cli(target.as_deref()),
         Some(Commands::Voice { preset }) => {
             if preset.eq_ignore_ascii_case("off") {
                 set_clean()
@@ -667,6 +670,51 @@ pub fn reset_clean_baseline() -> Result<()> {
     println!("  • Output Gain               : +0.0 dB");
     println!("  • Creative Voice FX         : Bypassed / Dry (100% natural speech)");
     Ok(())
+}
+
+pub fn handle_reset_cli(target: Option<&str>) -> Result<()> {
+    match target {
+        None | Some("clean") | Some("natural clean") | Some("Natural Clean") => {
+            reset_clean_baseline()
+        }
+        Some("all") | Some("ALL") => {
+            let mut cfg = CleanMicSettings::default();
+            cfg.quiet_voice_boost_enabled = true;
+            cfg.quiet_voice_boost_db = 4.0;
+            cfg.dpdfnet_attenuation_db = 45.0;
+            cfg.output_gain_db = 0.0;
+            cfg.save()?;
+
+            let mut mgr = PresetManager::new()?;
+            mgr.reset_all_presets()?;
+
+            let active_name = mgr.active_preset_name().to_string();
+            let _ = apply_voice_internal(&active_name, false)?;
+
+            println!("✓ Reset ALL 27 presets & clean mic to factory defaults:");
+            println!("  • Virtual Microphone Source : ghelper-audio (Priority 3000)");
+            println!("  • All 27 factory presets restored to default DSP parameters");
+            println!("  • Clean mic restored to DPDFNet 45dB, Quiet Voice Boost +4dB [ON], Output 0dB");
+            println!("  • Active preset reloaded: {}", active_name);
+            Ok(())
+        }
+        Some(name) => {
+            let mut mgr = PresetManager::new()?;
+            if mgr.reset_preset(name)? {
+                let active_name = mgr.active_preset_name().to_string();
+                if active_name.eq_ignore_ascii_case(name) {
+                    let _ = apply_voice_internal(name, false)?;
+                }
+                println!("✓ Reset preset '{}' to factory baseline parameters.", name);
+                Ok(())
+            } else {
+                anyhow::bail!(
+                    "Cannot reset '{}': not a recognized factory preset. Use 'mic list' to view available presets or 'mic reset all'.",
+                    name
+                );
+            }
+        }
+    }
 }
 
 pub fn set_clean() -> Result<()> {

@@ -382,12 +382,8 @@ fn test_tui_pipeline_graph_and_preset_details() {
         "Parameters breakdown missing"
     );
     assert!(
-        content.contains("CURRENTLY ACTIVE"),
+        content.contains("ACTIVE"),
         "Active badge missing for active preset"
-    );
-    assert!(
-        content.contains("ghelper-audio"),
-        "Routing source node missing"
     );
     assert!(
         content.contains("reset"),

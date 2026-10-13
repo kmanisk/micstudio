@@ -167,6 +167,16 @@ fn render_top_bar(frame: &mut Frame, area: Rect, state: &AppState) {
     spans.push(Span::raw(" │ "));
     spans.extend(meter_spans);
 
+    if let Some(msg) = state.active_status() {
+        spans.push(Span::raw(" │ "));
+        spans.push(Span::styled(
+            fit_string(&format!("● {}", msg), 38),
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ));
+    }
+
     let line = Line::from(spans);
     let p = Paragraph::new(line);
     frame.render_widget(p, area);
@@ -368,60 +378,36 @@ fn render_preset_details(frame: &mut Frame, area: Rect, state: &AppState) {
     let mut lines = Vec::new();
     let inner_w = inner.width as usize;
 
-    // Line 1: Identity badges & routing status
-    let mut header_spans = vec![Span::styled(
-        format!("[{}] ", selected.category),
-        Style::default()
-            .fg(Color::Magenta)
-            .add_modifier(Modifier::BOLD),
-    )];
-    if selected.verified {
-        header_spans.push(Span::styled(
-            "[VERIFIED] ",
-            Style::default().fg(Color::Green),
-        ));
-    }
+    // Line 1: Minimal status badge & clean description (No duplicate [Natural], no duplicate [VERIFIED], no redundant node string)
+    let mut header_spans = Vec::new();
     if is_selected_active {
         header_spans.push(Span::styled(
-            "[CURRENTLY ACTIVE] ",
+            "● ACTIVE",
             Style::default()
                 .fg(Color::Green)
                 .add_modifier(Modifier::BOLD),
         ));
-        let src_node = if selected.name.eq_ignore_ascii_case("Natural Clean") {
-            "ghelper-audio (Clean Broadcast)"
-        } else {
-            "ghelper-audio (Live FX Hot-Reload)"
-        };
-        header_spans.push(Span::styled(
-            format!("Node: {}", src_node),
-            Style::default().fg(Color::Cyan),
-        ));
+        header_spans.push(Span::raw("  "));
+        let desc_fit = fit_string(&selected.description, inner_w.saturating_sub(12));
+        header_spans.push(Span::styled(desc_fit, Style::default().fg(Color::Gray)));
     } else {
         header_spans.push(Span::styled(
-            "[PREVIEW ONLY] ",
-            Style::default().fg(Color::Yellow),
+            "○ PREVIEW",
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
         ));
         header_spans.push(Span::styled(
-            "(Press Enter to Apply)",
+            " (Enter to apply)",
             Style::default().fg(Color::DarkGray),
         ));
+        header_spans.push(Span::raw("  "));
+        let desc_fit = fit_string(&selected.description, inner_w.saturating_sub(30));
+        header_spans.push(Span::styled(desc_fit, Style::default().fg(Color::Gray)));
     }
     lines.push(Line::from(header_spans));
 
-    // Line 2: Description
-    let desc_fit = fit_string(&selected.description, inner_w.saturating_sub(13));
-    lines.push(Line::from(vec![
-        Span::styled(
-            "Description: ",
-            Style::default()
-                .fg(Color::White)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(desc_fit, Style::default().fg(Color::Gray)),
-    ]));
-
-    // Line 3: Stage Pipeline graph
+    // Line 2: Pipeline summary graph
     let stages = selected.stage_pipeline_summary();
     let stages_joined = stages.join(" ➔ ");
     lines.push(Line::from(vec![
@@ -437,18 +423,18 @@ fn render_preset_details(frame: &mut Frame, area: Rect, state: &AppState) {
         ),
     ]));
 
-    // Line 4: DSP Parameters breakdown
+    // Line 3: DSP Parameters breakdown (shortened names to prevent horizontal parameter overflow)
     let nonzero = selected.nonzero_params();
     if nonzero.is_empty() {
         let clean_param_text = if state.quiet_boost_enabled {
             format!(
-                "Direct bypass (DPDFNet {:.0}dB) │ Quiet Voice Boost {:+.0}dB [ON] (Lowered threshold & leveling)",
-                state.dpdfnet_attenuation, state.quiet_boost_db
+                "Denoise: {:.0}dB │ Quiet Boost: {:+.0}dB [ON] │ Output: {:+.1}dB",
+                state.dpdfnet_attenuation, state.quiet_boost_db, state.output_gain_db
             )
         } else {
             format!(
-                "Direct bypass — pristine clean speech (DPDFNet {:.0}dB, Quiet Boost: OFF)",
-                state.dpdfnet_attenuation
+                "Denoise: {:.0}dB │ Quiet Boost: [OFF] │ Output: {:+.1}dB",
+                state.dpdfnet_attenuation, state.output_gain_db
             )
         };
         lines.push(Line::from(vec![
@@ -463,7 +449,21 @@ fn render_preset_details(frame: &mut Frame, area: Rect, state: &AppState) {
     } else {
         let mut param_strs = Vec::new();
         for (param, val) in nonzero {
-            param_strs.push(format!("{}: {}", param, val));
+            let short_param = match param.as_str() {
+                "Pitch Shift" => "Pitch",
+                "Model Boost" => "Boost",
+                "Presence EQ" => "EQ",
+                "Effect Mix" => "Mix",
+                "Bandpass Filter" => "Filter",
+                "Ring Modulation" => "RingMod",
+                "Tremolo / AM" => "Tremolo",
+                "Tube Distortion" => "Drive",
+                "Bitcrusher" => "Decimator",
+                "Stereo Delay" => "Delay",
+                "DPDFNet Attn" => "Denoise",
+                other => other,
+            };
+            param_strs.push(format!("{}: {}", short_param, val));
         }
         lines.push(Line::from(vec![
             Span::styled(
@@ -479,30 +479,12 @@ fn render_preset_details(frame: &mut Frame, area: Rect, state: &AppState) {
         ]));
     }
 
-    // Line 5: Tech limitations note
-    if inner.height >= 5 {
-        if let Some(note) = selected.limitations_note() {
-            lines.push(Line::from(vec![
-                Span::styled(
-                    "Tech Note  : ",
-                    Style::default()
-                        .fg(Color::Yellow)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(
-                    fit_string(&note, inner_w.saturating_sub(13)),
-                    Style::default().fg(Color::DarkGray),
-                ),
-            ]));
-        }
-    }
-
-    // Line 6+: Sidetone prompt if sidetone is off and space permits
-    if !state.sidetone_enabled && inner.height >= 7 {
+    // Line 4: Sidetone prompt if sidetone is off and space permits
+    if !state.sidetone_enabled && inner.height >= 5 {
         lines.push(Line::from(vec![
             Span::styled("Monitoring : ", Style::default().fg(Color::White)),
             Span::styled(
-                "Inactive (Press 'v' to monitor mic & view live real-time spectrograph)",
+                "Off ('v' to hear mic)",
                 Style::default().fg(Color::DarkGray),
             ),
         ]));
@@ -768,9 +750,14 @@ fn build_frequency_axis(width: usize) -> String {
 }
 
 fn render_live_controls(frame: &mut Frame, area: Rect, state: &AppState) {
+    let title = if area.width >= 56 {
+        " Live Controls (Shift+j/k to cycle, h/l to adjust) "
+    } else {
+        " Live Controls (Shift+j/k, h/l) "
+    };
     let block = Block::default()
         .borders(Borders::ALL)
-        .title(" Live Controls (Shift+j/k or Tab to cycle, h/l to adjust) ");
+        .title(title);
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
@@ -1009,8 +996,13 @@ fn render_live_controls(frame: &mut Frame, area: Rect, state: &AppState) {
     ]));
 
     if inner.height >= 8 {
+        let hint_text = if inner.width >= 56 {
+            " [r] Reset model │ [Shift+R] Reset all │ [w] Save tweaks"
+        } else {
+            " [r] Reset │ [Shift+R] All │ [w] Save tweaks"
+        };
         lines.push(Line::from(vec![Span::styled(
-            " [r] Reset preset to default │ [w] Save live tweaks",
+            hint_text,
             Style::default().fg(Color::DarkGray),
         )]));
     }
@@ -1025,7 +1017,7 @@ fn render_bottom_bar(frame: &mut Frame, area: Rect, state: &AppState) {
         .add_modifier(Modifier::BOLD);
     let action_style = Style::default().fg(Color::DarkGray);
 
-    let mut spans = if state.search_mode {
+    let spans = if state.search_mode {
         vec![
             Span::styled(
                 "Search: ",
@@ -1039,44 +1031,58 @@ fn render_bottom_bar(frame: &mut Frame, area: Rect, state: &AppState) {
             ),
             Span::styled(" (Enter done, Esc clear)", action_style),
         ]
+    } else if state.spectrograph_fullscreen {
+        vec![
+            Span::styled("s", key_style),
+            Span::styled(": exit spec │ ", action_style),
+            Span::styled("m", key_style),
+            Span::styled(": toggle mode │ ", action_style),
+            Span::styled("Esc", key_style),
+            Span::styled(": return │ ", action_style),
+            Span::styled("q", key_style),
+            Span::styled(": quit", action_style),
+        ]
+    } else if area.width >= 105 {
+        vec![
+            Span::styled("j/k", key_style),
+            Span::styled(": select │ ", action_style),
+            Span::styled("Enter", key_style),
+            Span::styled(": apply │ ", action_style),
+            Span::styled("Space", key_style),
+            Span::styled(": clean │ ", action_style),
+            Span::styled("r", key_style),
+            Span::styled(": reset │ ", action_style),
+            Span::styled("R", key_style),
+            Span::styled(": reset all │ ", action_style),
+            Span::styled("w", key_style),
+            Span::styled(": save tweaks │ ", action_style),
+            Span::styled("s", key_style),
+            Span::styled(": spec │ ", action_style),
+            Span::styled("v", key_style),
+            Span::styled(": hear │ ", action_style),
+            Span::styled("?", key_style),
+            Span::styled(": help │ ", action_style),
+            Span::styled("q", key_style),
+            Span::styled(": quit", action_style),
+        ]
     } else {
         vec![
             Span::styled("j/k", key_style),
-            Span::styled(" presets ", action_style),
-            Span::styled("Shift+j/k", key_style),
-            Span::styled(" controls ", action_style),
-            Span::styled("h/l", key_style),
-            Span::styled(" adjust ", action_style),
+            Span::styled(": select │ ", action_style),
             Span::styled("Enter", key_style),
-            Span::styled(" apply ", action_style),
+            Span::styled(": apply │ ", action_style),
             Span::styled("Space", key_style),
-            Span::styled(" clean ", action_style),
+            Span::styled(": clean │ ", action_style),
             Span::styled("r", key_style),
-            Span::styled(" reset ", action_style),
+            Span::styled(": reset │ ", action_style),
             Span::styled("w", key_style),
-            Span::styled(" save ", action_style),
-            Span::styled("s", key_style),
-            Span::styled(" spec ", action_style),
-            Span::styled("m", key_style),
-            Span::styled(" mode ", action_style),
-            Span::styled("v", key_style),
-            Span::styled(" hear ", action_style),
+            Span::styled(": save tweaks │ ", action_style),
             Span::styled("?", key_style),
-            Span::styled(" help ", action_style),
+            Span::styled(": help │ ", action_style),
             Span::styled("q", key_style),
-            Span::styled(" quit", action_style),
+            Span::styled(": quit", action_style),
         ]
     };
-
-    if let Some(msg) = state.active_status() {
-        spans.push(Span::raw(" │ "));
-        spans.push(Span::styled(
-            fit_string(&msg, 24),
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-        ));
-    }
 
     let p = Paragraph::new(Line::from(spans));
     frame.render_widget(p, area);
@@ -1143,8 +1149,18 @@ fn render_help_dialog(frame: &mut Frame, area: Rect, state: &AppState) {
             ),
         ]),
         Line::from(vec![
+            Span::styled("R / Shift+R    ", key_style),
+            Span::styled(
+                ": Reset ALL 27 presets & clean mic to factory defaults",
+                desc_style,
+            ),
+        ]),
+        Line::from(vec![
             Span::styled("w              ", key_style),
-            Span::styled(": Save current live tweaks to active preset", desc_style),
+            Span::styled(
+                ": Save live tweaks (DPDFNet, boost, mix) to preset file",
+                desc_style,
+            ),
         ]),
         Line::from(vec![
             Span::styled("F5 / Ctrl+R    ", key_style),

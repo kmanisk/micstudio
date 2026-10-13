@@ -1026,6 +1026,22 @@ impl PresetManager {
         Ok(false)
     }
 
+    /// Reset ALL factory presets back to their default factory parameters
+    pub fn reset_all_presets(&mut self) -> Result<()> {
+        let factory_defs = PresetConfig::default_factory_presets();
+        let mut user_presets: Vec<Preset> = self
+            .config
+            .presets
+            .iter()
+            .filter(|p| p.user)
+            .cloned()
+            .collect();
+        let mut new_presets = factory_defs;
+        new_presets.append(&mut user_presets);
+        self.config.presets = new_presets;
+        self.save()
+    }
+
     /// Update a preset in-place (e.g. from live control tweaks)
     pub fn update_preset_parameters(&mut self, preset: &Preset) -> Result<()> {
         if let Some(target) = self
