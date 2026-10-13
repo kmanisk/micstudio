@@ -732,8 +732,8 @@ fn test_20_hardware_adc_clipping_detection_vs_digital_limiting() {
     saturated[51] = 1.0;
     saturated[52] = 1.0; // 3 consecutive flat-topped samples!
     let (hw_clip, digital_limit) = analyze_clipping(&saturated);
-    assert!(hw_clip, ">= 3 flat-topped rail samples must honestly trigger [HW ADC CLIP]");
-    assert!(!digital_limit, "Hardware ADC clipping takes precedence over digital limiting");
+    assert!(hw_clip, ">= 3 flat-topped rail samples must trigger input clipping warning");
+    assert!(!digital_limit, "Input clipping takes precedence over digital limiting");
 }
 
 #[test]

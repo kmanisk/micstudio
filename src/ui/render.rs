@@ -141,7 +141,7 @@ fn render_top_bar(frame: &mut Frame, area: Rect, state: &AppState) {
         ];
         if is_hw_clip {
             spans.push(Span::styled(
-                " [HW ADC CLIP: Lower physical mic volume]",
+                " [Input clipping suspected — check microphone gain]",
                 Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
             ));
         } else if is_digital_limiting {
