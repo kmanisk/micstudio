@@ -575,27 +575,12 @@ fn test_17_quiet_voice_boost_compressor_math() {
     use micstudio::config::CleanMicSettings;
 
     let mut cfg = CleanMicSettings::default();
-    assert!(!cfg.quiet_voice_boost_enabled);
-    assert_eq!(cfg.quiet_voice_boost_db, 0.0);
+    assert!(cfg.quiet_voice_boost_enabled);
+    assert_eq!(cfg.quiet_voice_boost_db, 4.0);
 
-    // Baseline calculation (disabled / 0 dB)
-    let boost = cfg.quiet_voice_boost_db;
-    let (thresh_linear, makeup_linear) = if cfg.quiet_voice_boost_enabled && boost > 0.01 {
-        let thresh_db = (-12.0 - (boost * 1.5)).clamp(-24.0, -12.0);
-        let makeup_db = (3.0 + boost).clamp(3.0, 12.0);
-        (
-            10.0f32.powf(thresh_db / 20.0),
-            10.0f32.powf(makeup_db / 20.0),
-        )
-    } else {
-        (0.251189, 1.412538)
-    };
-    assert!((thresh_linear - 0.251189).abs() < 1e-5);
-    assert!((makeup_linear - 1.412538).abs() < 1e-5);
-
-    // +4 dB quiet speech boost
-    cfg.quiet_voice_boost_enabled = true;
-    cfg.quiet_voice_boost_db = 4.0;
+    // Default +4 dB quiet speech boost calculation:
+    // -18 dBFS threshold: 10^(-18/20) ≈ 0.125893
+    // +7 dB makeup gain: 10^(7/20) ≈ 2.238721
     let boost = cfg.quiet_voice_boost_db;
     let (thresh_linear_4, makeup_linear_4) = {
         let thresh_db = (-12.0 - (boost * 1.5)).clamp(-24.0, -12.0);
@@ -605,13 +590,17 @@ fn test_17_quiet_voice_boost_compressor_math() {
             10.0f32.powf(makeup_db / 20.0),
         )
     };
-    // -18 dBFS threshold: 10^(-18/20) ≈ 0.125893
     assert!((thresh_linear_4 - 0.125893).abs() < 1e-4);
-    // +7 dBFS makeup: 10^(7/20) ≈ 2.238721
     assert!((makeup_linear_4 - 2.238721).abs() < 1e-4);
+
+    // Baseline calculation when disabled (0 dB / off)
+    cfg.quiet_voice_boost_enabled = false;
+    cfg.quiet_voice_boost_db = 0.0;
+    let (thresh_linear_base, makeup_linear_base) = (0.251189, 1.412538);
+
     // Threshold is lower, makeup is higher -> quiet speech is lifted
-    assert!(thresh_linear_4 < thresh_linear);
-    assert!(makeup_linear_4 > makeup_linear);
+    assert!(thresh_linear_4 < thresh_linear_base);
+    assert!(makeup_linear_4 > makeup_linear_base);
 
     // Clamping test
     cfg.quiet_voice_boost_db = 25.0;

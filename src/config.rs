@@ -61,10 +61,10 @@ impl Default for CleanMicSettings {
     fn default() -> Self {
         Self {
             schema_version: SETTINGS_VERSION,
-            dpdfnet_attenuation_db: 100.0,
+            dpdfnet_attenuation_db: 45.0,
             output_gain_db: 0.0,
-            quiet_voice_boost_enabled: false,
-            quiet_voice_boost_db: 0.0,
+            quiet_voice_boost_enabled: true,
+            quiet_voice_boost_db: 4.0,
             hear_voice: false,
             meter_enabled: false,
             rnnoise_enabled: true,
