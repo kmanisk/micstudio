@@ -197,7 +197,7 @@ impl CleanMicSettings {
     }
 
     pub fn sync_hear_voice_with_source(enable: bool, _fx_active: bool) {
-        // Disconnect any existing monitor links from both sources
+        // Disconnect any existing monitor links unconditionally from both sources
         disconnect_monitor_links("ghelper-audio:capture_MONO");
         disconnect_monitor_links("ghelper-audio-fx:capture_MONO");
 
@@ -217,6 +217,21 @@ impl CleanMicSettings {
         };
 
         if !default_sink.is_empty() {
+            // Anti-Echo Protection: Never loop microphone audio into built-in laptop speakers
+            // or speaker DSP sinks, as acoustic feedback immediately causes infinite echo / squealing.
+            let lower_sink = default_sink.to_lowercase();
+            let is_speaker = lower_sink.contains("analog-stereo")
+                || lower_sink.contains("speaker")
+                || lower_sink.contains("peace_gaming");
+            let is_headphone = lower_sink.contains("headphone")
+                || lower_sink.contains("headset")
+                || lower_sink.contains("bluez");
+
+            if is_speaker && !is_headphone {
+                // Built-in speakers active: suppress sidetone audio loopback to protect against echo
+                return;
+            }
+
             let left_port = format!("{}:playback_FL", default_sink);
             let right_port = format!("{}:playback_FR", default_sink);
             let _ = Command::new("pw-link")
@@ -236,7 +251,7 @@ pub fn is_voice_fx_active() -> bool {
     false
 }
 
-fn disconnect_monitor_links(source_port: &str) {
+pub fn disconnect_monitor_links(source_port: &str) {
     if let Ok(out) = Command::new("pw-link").arg("-l").output() {
         let text = String::from_utf8_lossy(&out.stdout);
         let mut cur_port = String::new();
@@ -249,12 +264,17 @@ fn disconnect_monitor_links(source_port: &str) {
                 if cur_port == source_port {
                     if let Some(target) = line.split("|->").nth(1) {
                         let target_clean = target.trim();
-                        // Only disconnect if target is a playback sink (e.g. bluez, alsa playback)
-                        if target_clean.contains("playback_") {
-                            let _ = Command::new("pw-link")
-                                .args(["-d", source_port, target_clean])
-                                .output();
-                        }
+                        let _ = Command::new("pw-link")
+                            .args(["-d", source_port, target_clean])
+                            .output();
+                    }
+                }
+            } else if line.starts_with(' ') && line.contains("|<-") {
+                if let Some(src) = line.split("|<-").nth(1) {
+                    if src.trim() == source_port {
+                        let _ = Command::new("pw-link")
+                            .args(["-d", source_port, &cur_port])
+                            .output();
                     }
                 }
             } else if !line.starts_with(' ') {

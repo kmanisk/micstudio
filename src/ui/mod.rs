@@ -263,5 +263,8 @@ fn run_event_loop_with_state(
         }
     }
 
+    // Ensure any sidetone monitor links are severed upon quitting MicStudio
+    crate::config::CleanMicSettings::sync_hear_voice(false);
+
     Ok(())
 }
