@@ -389,9 +389,9 @@ fn render_preset_details(frame: &mut Frame, area: Rect, state: &AppState) {
                 .add_modifier(Modifier::BOLD),
         ));
         let src_node = if selected.name.eq_ignore_ascii_case("Natural Clean") {
-            "ghelper-audio (Clean Direct)"
+            "ghelper-audio (Clean Broadcast)"
         } else {
-            "ghelper-audio-fx (Live FX)"
+            "ghelper-audio (Live FX Hot-Reload)"
         };
         header_spans.push(Span::styled(
             format!("Node: {}", src_node),

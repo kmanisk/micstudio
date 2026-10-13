@@ -410,23 +410,34 @@ impl AppState {
     pub fn apply_selected(&mut self) -> Result<()> {
         let name = self.selected_preset().name.clone();
         let atten = self.selected_preset().dpdfnet_attenuation_db;
+        let wet_dry = self.selected_preset().wet_dry_mix;
+        let mix_pct = ((1.0 - wet_dry).clamp(0.0, 1.0) * 100.0).round() as u32;
         let msg = crate::cli::apply_voice_internal(&name, false)?;
         self.active_preset_name = name;
         self.dpdfnet_attenuation = atten;
+        self.effect_mix_pct = mix_pct;
         let cfg = CleanMicSettings::load();
         self.quiet_boost_enabled = cfg.quiet_voice_boost_enabled;
         self.quiet_boost_db = cfg.quiet_voice_boost_db;
+        self.output_gain_db = cfg.output_gain_db;
         self.set_status(msg);
         Ok(())
     }
 
     pub fn revert_clean(&mut self) -> Result<()> {
+        let mut cfg = CleanMicSettings::load();
+        if !cfg.quiet_voice_boost_enabled || cfg.quiet_voice_boost_db < 0.01 {
+            cfg.quiet_voice_boost_enabled = true;
+            cfg.quiet_voice_boost_db = 4.0;
+            let _ = cfg.save();
+        }
         let msg = crate::cli::apply_voice_internal("Natural Clean", false)?;
         self.active_preset_name = "Natural Clean".to_string();
-        self.dpdfnet_attenuation = 45.0;
-        let cfg = CleanMicSettings::load();
+        self.dpdfnet_attenuation = cfg.dpdfnet_attenuation_db;
+        self.output_gain_db = cfg.output_gain_db;
         self.quiet_boost_enabled = cfg.quiet_voice_boost_enabled;
         self.quiet_boost_db = cfg.quiet_voice_boost_db;
+        self.effect_mix_pct = 100;
         let indices = self.filtered_indices();
         for (i, &idx) in indices.iter().enumerate() {
             if self.presets[idx].name.eq_ignore_ascii_case("Natural Clean") {
@@ -441,14 +452,28 @@ impl AppState {
     pub fn reset_selected_preset(&mut self) -> Result<()> {
         let name = self.selected_preset().name.clone();
         if name.eq_ignore_ascii_case("Natural Clean") {
-            self.quiet_boost_db = 0.0;
-            self.quiet_boost_enabled = false;
+            self.dpdfnet_attenuation = 45.0;
+            self.output_gain_db = 0.0;
+            self.quiet_boost_db = 4.0;
+            self.quiet_boost_enabled = true;
+            self.effect_mix_pct = 100;
             let mut cfg = CleanMicSettings::load();
-            cfg.quiet_voice_boost_enabled = false;
-            cfg.quiet_voice_boost_db = 0.0;
+            cfg.dpdfnet_attenuation_db = 45.0;
+            cfg.output_gain_db = 0.0;
+            cfg.quiet_voice_boost_enabled = true;
+            cfg.quiet_voice_boost_db = 4.0;
             cfg.apply_dsp_params()?;
             cfg.save()?;
-            self.set_status("Reset 'Natural Clean' quiet voice boost to OFF (+0 dB).".to_string());
+            let mut mgr = PresetManager::new()?;
+            let _ = mgr.reset_preset("Natural Clean");
+            self.presets = mgr.all_presets().to_vec();
+            if self.active_preset_name.eq_ignore_ascii_case("Natural Clean") {
+                let _ = crate::cli::apply_voice_internal("Natural Clean", false);
+            }
+            self.set_status(
+                "Reset 'Natural Clean' to factory baseline (DPDFNet 45dB, Quiet Boost ON +4dB)."
+                    .to_string(),
+            );
             return Ok(());
         }
         let mut mgr = PresetManager::new()?;

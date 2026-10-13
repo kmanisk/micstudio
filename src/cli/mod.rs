@@ -26,6 +26,8 @@ pub enum Commands {
     List,
     /// Switch to the native clean broadcast microphone and stop optional FX
     Clean,
+    /// Reset microphone and Natural Clean to factory baseline (DPDFNet 45dB, Quiet Boost ON +4dB)
+    Reset,
     /// Manage voice effects
     Voice {
         /// Preset name to apply, or 'off' to disable voice FX
@@ -201,6 +203,7 @@ pub fn handle_cli(cli: Cli) -> Result<()> {
         Some(Commands::Status) => show_status(),
         Some(Commands::List) => list_presets(),
         Some(Commands::Clean) => set_clean(),
+        Some(Commands::Reset) => reset_clean_baseline(),
         Some(Commands::Voice { preset }) => {
             if preset.eq_ignore_ascii_case("off") {
                 set_clean()
@@ -634,7 +637,36 @@ pub fn list_presets() -> Result<()> {
 }
 
 pub fn set_clean_internal(verbose: bool) -> Result<String> {
+    let mut cfg = CleanMicSettings::load();
+    if !cfg.quiet_voice_boost_enabled || cfg.quiet_voice_boost_db < 0.01 {
+        cfg.quiet_voice_boost_enabled = true;
+        cfg.quiet_voice_boost_db = 4.0;
+        let _ = cfg.save();
+    }
     apply_voice_internal("Natural Clean", verbose)
+}
+
+pub fn reset_clean_baseline() -> Result<()> {
+    let mut cfg = CleanMicSettings::default();
+    cfg.quiet_voice_boost_enabled = true;
+    cfg.quiet_voice_boost_db = 4.0;
+    cfg.dpdfnet_attenuation_db = 45.0;
+    cfg.output_gain_db = 0.0;
+    cfg.save()?;
+
+    let mut mgr = PresetManager::new()?;
+    let _ = mgr.reset_preset("Natural Clean");
+    mgr.set_active_preset("Natural Clean")?;
+
+    let _ = apply_voice_internal("Natural Clean", false)?;
+    println!("✓ Reset 'Natural Clean' to exact known-good baseline:");
+    println!("  • Virtual Microphone Source : ghelper-audio (Priority 3000)");
+    println!("  • DPDFNet Neural Suppression: 45.0 dB");
+    println!("  • Quiet Voice Boost         : +4.0 dB [ON] (Threshold -18 dBFS, +7 dB makeup gain)");
+    println!("  • Anti-Shout Protection     : Active (5ms attack, 120ms hold, 500ms release, -2 dBFS ceiling)");
+    println!("  • Output Gain               : +0.0 dB");
+    println!("  • Creative Voice FX         : Bypassed / Dry (100% natural speech)");
+    Ok(())
 }
 
 pub fn set_clean() -> Result<()> {
@@ -1360,7 +1392,7 @@ fn calc_band_delta(
 pub fn run_live_verify(preset: Option<&str>, duration_secs: u32) -> Result<()> {
     println!("=== MicStudio Real Hardware Live Verification ===");
     println!(":: Hardware Mic Target : alsa_input.pci-0000_00_1f.3.analog-stereo");
-    println!(":: Virtual Source Node : ghelper-audio / ghelper-audio-fx");
+    println!(":: Virtual Source Node : ghelper-audio (Unified Virtual Mic)");
     println!(":: Test Duration       : {}s per preset", duration_secs);
 
     let presets_to_test: Vec<&str> = if let Some(p) = preset {
@@ -1385,12 +1417,7 @@ pub fn run_live_verify(preset: Option<&str>, duration_secs: u32) -> Result<()> {
         apply_voice_internal(name, false)?;
         std::thread::sleep(std::time::Duration::from_millis(150));
 
-        let is_clean = name.eq_ignore_ascii_case("Natural Clean");
-        let target = if is_clean {
-            "ghelper-audio"
-        } else {
-            "ghelper-audio-fx"
-        };
+        let target = "ghelper-audio";
 
         let test_wav = std::path::PathBuf::from(format!(
             "/tmp/micstudio_hw_test_{}.wav",

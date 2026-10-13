@@ -386,7 +386,7 @@ fn test_tui_pipeline_graph_and_preset_details() {
         "Active badge missing for active preset"
     );
     assert!(
-        content.contains("ghelper-audio-fx"),
+        content.contains("ghelper-audio"),
         "Routing source node missing"
     );
     assert!(
