@@ -111,6 +111,18 @@ fn render_top_bar(frame: &mut Frame, area: Rect, state: &AppState) {
                 }),
             ),
         ];
+        if state.sidetone_enabled {
+            spans.push(Span::styled(
+                format!(" {:+5.1} dBFS", state.input_rms_db),
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            ));
+            spans.push(Span::styled(
+                format!(" (Pk: {:+5.1})", peak_db),
+                Style::default().fg(Color::DarkGray),
+            ));
+        }
         if is_hw_clip {
             spans.push(Span::styled(
                 " [Input clipping suspected — check microphone gain]",
@@ -543,7 +555,7 @@ fn render_preset_details(frame: &mut Frame, area: Rect, state: &AppState) {
     let is_selected_active = selected
         .name
         .eq_ignore_ascii_case(&state.active_preset_name);
-    let title = format!(" Model: {} ", fit_string(&selected.name, 28));
+    let title = " Details ".to_string();
 
     let block = Block::default().borders(Borders::ALL).title(title);
     let inner = block.inner(area);
@@ -556,7 +568,7 @@ fn render_preset_details(frame: &mut Frame, area: Rect, state: &AppState) {
     let mut lines = Vec::new();
     let inner_w = inner.width as usize;
 
-    // Line 1: Name + Active indicator + Category
+    // Line 1: Active status + compact audio parameters
     let state_badge = if is_selected_active {
         Span::styled(
             "● Active",
@@ -568,23 +580,7 @@ fn render_preset_details(frame: &mut Frame, area: Rect, state: &AppState) {
         Span::styled("○ Inactive", Style::default().fg(Color::DarkGray))
     };
 
-    lines.push(Line::from(vec![
-        Span::styled(
-            &selected.name,
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::raw("   "),
-        state_badge,
-        Span::raw("   "),
-        Span::styled(
-            format!("Category: {}", selected.category),
-            Style::default().fg(Color::DarkGray),
-        ),
-    ]));
-
-    // Line 2: Compact audio parameters line
+    // Compact audio parameters
     let spec_tags = if selected.name.eq_ignore_ascii_case("Natural Clean") {
         let boost_str = if state.quiet_boost_enabled {
             format!("Boost: {:+.0} dB [ON]", state.quiet_boost_db)
@@ -612,12 +608,16 @@ fn render_preset_details(frame: &mut Frame, area: Rect, state: &AppState) {
         parts.join(" │ ")
     };
 
-    lines.push(Line::from(vec![Span::styled(
-        fit_string(&spec_tags, inner_w.saturating_sub(2)),
-        Style::default().fg(Color::White),
-    )]));
+    lines.push(Line::from(vec![
+        state_badge,
+        Span::styled("  │  ", Style::default().fg(Color::DarkGray)),
+        Span::styled(
+            fit_string(&spec_tags, inner_w.saturating_sub(14)),
+            Style::default().fg(Color::White),
+        ),
+    ]));
 
-    // Line 3: Blank separator if space permits
+    // Line 2: Blank separator if space permits
     if inner.height >= 4 {
         lines.push(Line::raw(""));
     }
@@ -837,7 +837,7 @@ fn render_rta_bars(frame: &mut Frame, inner: Rect, state: &AppState) {
                     _ => '█',
                 };
                 spans.push(Span::styled(ch.to_string(), row_style));
-            } else if r == peak_row && peak > 0.05 {
+            } else if r == peak_row && peak > 0.15 && total_steps > 0 {
                 spans.push(Span::styled(
                     "─",
                     Style::default()
@@ -892,7 +892,7 @@ fn render_waterfall_heatmap(frame: &mut Frame, inner: Rect, state: &AppState) {
                 let val = if b < slice.len() { slice[b] } else { 0.0 };
 
                 if val < 0.12 {
-                    spans.push(Span::styled("·", Style::default().fg(Color::DarkGray)));
+                    spans.push(Span::raw(" "));
                 } else if val < 0.28 {
                     spans.push(Span::styled("░", Style::default().fg(Color::Blue)));
                 } else if val < 0.48 {

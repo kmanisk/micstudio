@@ -342,14 +342,6 @@ impl AppState {
 
     pub fn toggle_spectrograph_fullscreen(&mut self) {
         self.spectrograph_fullscreen = !self.spectrograph_fullscreen;
-        self.set_status(format!(
-            "Spectrograph View: {}",
-            if self.spectrograph_fullscreen {
-                "Fullscreen"
-            } else {
-                "Embedded"
-            }
-        ));
     }
 
     pub fn toggle_spectrograph_mode(&mut self) {
@@ -357,13 +349,6 @@ impl AppState {
             SpectrographMode::RtaBars => SpectrographMode::Waterfall,
             SpectrographMode::Waterfall => SpectrographMode::RtaBars,
         };
-        self.set_status(format!(
-            "Spectrograph Mode: {}",
-            match self.spectrograph_mode {
-                SpectrographMode::RtaBars => "RTA Spectrum Bars",
-                SpectrographMode::Waterfall => "Waterfall Spectrogram",
-            }
-        ));
     }
 
     pub fn toggle_sidetone(&mut self) -> Result<()> {

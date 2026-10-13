@@ -79,6 +79,19 @@ fn test_render_80x24_minimal_resolution() {
     assert!(full_rendered.contains("j/k"), "Footer hotkeys missing");
     assert!(full_rendered.contains("Space"), "Space hotkey missing");
     assert!(full_rendered.contains("clean"), "Clean hotkey missing");
+
+    // Sidetone OFF: meter has no dB readout
+    state.sidetone_enabled = false;
+    terminal.draw(|f| render_ui(f, &state)).unwrap();
+    let buf_off: String = terminal.backend().buffer().content().iter().map(|c| c.symbol()).collect();
+    assert!(!buf_off.contains("dBFS"), "Top bar should not show dBFS when Hear Voice is off");
+
+    // Sidetone ON: meter shows dB readout
+    state.sidetone_enabled = true;
+    state.meter_enabled = true;
+    terminal.draw(|f| render_ui(f, &state)).unwrap();
+    let buf_on: String = terminal.backend().buffer().content().iter().map(|c| c.symbol()).collect();
+    assert!(buf_on.contains("dBFS"), "Top bar should show dBFS when Hear Voice is on");
 }
 
 #[test]
