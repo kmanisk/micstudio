@@ -342,6 +342,10 @@ impl AppState {
 
     pub fn toggle_spectrograph_fullscreen(&mut self) {
         self.spectrograph_fullscreen = !self.spectrograph_fullscreen;
+        if self.spectrograph_fullscreen {
+            self.spectrograph_enabled = true;
+            self.meter_enabled = true;
+        }
     }
 
     pub fn toggle_spectrograph_mode(&mut self) {

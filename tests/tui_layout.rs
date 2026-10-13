@@ -378,6 +378,16 @@ fn test_spectrograph_rendering_and_modes() {
     // 3. Fullscreen Spectrograph
     state.spectrograph_fullscreen = true;
     assert!(terminal.draw(|f| render_ui(f, &state)).is_ok());
+    let buf_fs = terminal.backend().buffer().clone();
+    let mut fs_rendered = String::new();
+    for y in 0..30 {
+        for x in 0..100 {
+            fs_rendered.push_str(buf_fs.cell((x, y)).unwrap().symbol());
+        }
+    }
+    assert!(fs_rendered.contains("Fullscreen RTA Spectrum"));
+    assert!(fs_rendered.contains("Spectrogram Waterfall"));
+    assert!(fs_rendered.contains("exit graph"));
 }
 
 #[test]
@@ -420,6 +430,10 @@ fn test_tui_pipeline_graph_and_preset_details() {
     assert!(
         content.contains("details"),
         "Details shortcut missing from bottom bar"
+    );
+    assert!(
+        content.contains("graph"),
+        "Graph shortcut missing from bottom bar"
     );
     assert!(
         content.contains("apply"),

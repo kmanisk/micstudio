@@ -304,13 +304,13 @@ fn render_left_pane(frame: &mut Frame, area: Rect, state: &AppState) {
 
 fn render_right_pane(frame: &mut Frame, area: Rect, state: &AppState) {
     if state.sidetone_enabled {
-        let detail_height = if area.height <= 22 { 7 } else { 8 };
+        let detail_height = 4;
         let controls_height = if area.height <= 22 { 9 } else { 10 };
         let vertical_chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(detail_height),   // Preset details
-                Constraint::Min(5), // Live Spectrograph module (only when using 'v')
+                Constraint::Length(detail_height),   // Compact voice description
+                Constraint::Min(6), // Live Spectrograph module (expanded preview!)
                 Constraint::Length(controls_height), // Live Controls (7 items)
             ])
             .split(area);
@@ -676,7 +676,7 @@ fn render_details_modal(frame: &mut Frame, area: Rect, state: &AppState) {
 }
 
 fn render_spectrograph_module(frame: &mut Frame, area: Rect, state: &AppState) {
-    let title = " Spectrograph [Active] (m: mode) ".to_string();
+    let title = " Spectrograph [Active] (m: full graph) ".to_string();
 
     let block = Block::default()
         .borders(Borders::ALL)
@@ -872,7 +872,7 @@ fn render_fullscreen_spectrograph(frame: &mut Frame, area: Rect, state: &AppStat
 
     let block_wf = Block::default()
         .borders(Borders::ALL)
-        .title(" Spectrogram Waterfall (Time History) │ 's': return to normal view │ 'm': toggle mode │ Esc: exit ")
+        .title(" Spectrogram Waterfall (Time History) │ 'm' or Esc: exit full graph ")
         .border_style(Style::default().fg(Color::Green));
     let inner_wf = block_wf.inner(chunks[1]);
     frame.render_widget(block_wf, chunks[1]);
@@ -1201,25 +1201,26 @@ fn render_bottom_bar(frame: &mut Frame, area: Rect, state: &AppState) {
         ]
     } else if state.spectrograph_fullscreen {
         vec![
-            Span::styled("s", key_style),
-            Span::styled(": exit spec │ ", action_style),
             Span::styled("m", key_style),
-            Span::styled(": toggle mode │ ", action_style),
+            Span::styled(": exit graph │ ", action_style),
             Span::styled("Esc", key_style),
             Span::styled(": return", action_style),
         ]
     } else {
+        let sep = if area.width < 84 { "│ " } else { " │ " };
         vec![
             Span::styled("j/k", key_style),
-            Span::styled(": move │ ", action_style),
+            Span::styled(format!(": move{}", sep), action_style),
             Span::styled("Enter", key_style),
-            Span::styled(": apply │ ", action_style),
+            Span::styled(format!(": apply{}", sep), action_style),
             Span::styled("Space", key_style),
-            Span::styled(": details │ ", action_style),
+            Span::styled(format!(": details{}", sep), action_style),
+            Span::styled("m", key_style),
+            Span::styled(format!(": graph{}", sep), action_style),
             Span::styled("c", key_style),
-            Span::styled(": clean │ ", action_style),
+            Span::styled(format!(": clean{}", sep), action_style),
             Span::styled("r", key_style),
-            Span::styled(": reset │ ", action_style),
+            Span::styled(format!(": reset{}", sep), action_style),
             Span::styled("w", key_style),
             Span::styled(": save", action_style),
         ]
@@ -1268,9 +1269,9 @@ fn render_help_dialog(frame: &mut Frame, area: Rect, state: &AppState) {
             Span::styled(": Adjust active control value (- / +)", desc_style),
         ]),
         Line::from(vec![
-            Span::styled("s / m          ", key_style),
+            Span::styled("m / s / g      ", key_style),
             Span::styled(
-                ": Fullscreen Spectrograph / Toggle RTA vs Waterfall",
+                ": Dual-Graph (m/s) │ Toggle Mode (g)",
                 desc_style,
             ),
         ]),
@@ -1287,16 +1288,9 @@ fn render_help_dialog(frame: &mut Frame, area: Rect, state: &AppState) {
             Span::styled(": Immediately revert to Natural Clean", desc_style),
         ]),
         Line::from(vec![
-            Span::styled("r              ", key_style),
+            Span::styled("r / Shift+R    ", key_style),
             Span::styled(
-                ": Reset selected preset to factory default parameters",
-                desc_style,
-            ),
-        ]),
-        Line::from(vec![
-            Span::styled("R / Shift+R    ", key_style),
-            Span::styled(
-                ": Reset ALL 27 presets & clean mic to factory defaults",
+                ": Reset preset parameters │ Reset ALL to defaults",
                 desc_style,
             ),
         ]),

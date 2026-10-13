@@ -204,7 +204,7 @@ fn run_event_loop_with_state(
                                 || state.sidetone_enabled,
                         );
                     }
-                    (KeyCode::Char('s'), _) => {
+                    (KeyCode::Char('m'), _) | (KeyCode::Char('M'), _) | (KeyCode::Char('s'), _) => {
                         state.toggle_spectrograph_fullscreen();
                         monitor.set_enabled(
                             state.meter_enabled
@@ -212,7 +212,7 @@ fn run_event_loop_with_state(
                                 || state.sidetone_enabled,
                         );
                     }
-                    (KeyCode::Char('m'), _) => {
+                    (KeyCode::Char('g'), _) | (KeyCode::Char('G'), _) => {
                         state.toggle_spectrograph_mode();
                     }
                     (KeyCode::Char('v'), _) => {
