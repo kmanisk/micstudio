@@ -60,7 +60,8 @@ fn run_event_loop_with_state(
     terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
     mut state: AppState,
 ) -> Result<()> {
-    let should_monitor = state.meter_enabled || state.spectrograph_enabled;
+    let should_monitor =
+        state.meter_enabled || state.spectrograph_enabled || state.spectrograph_fullscreen;
     let mut monitor = MicMonitor::new(should_monitor);
 
     loop {
@@ -68,7 +69,8 @@ fn run_event_loop_with_state(
         terminal.draw(|frame| render_ui(frame, &state))?;
 
         // 30Hz when meter or spectrograph is on (smooth 33ms animation), 500ms slow tick when idle
-        let active_monitoring = state.meter_enabled || state.spectrograph_enabled;
+        let active_monitoring =
+            state.meter_enabled || state.spectrograph_enabled || state.spectrograph_fullscreen;
         let timeout = if active_monitoring {
             Duration::from_millis(33)
         } else {
@@ -209,8 +211,10 @@ fn run_event_loop_with_state(
                         monitor.set_enabled(
                             state.meter_enabled
                                 || state.spectrograph_enabled
+                                || state.spectrograph_fullscreen
                                 || state.sidetone_enabled,
                         );
+                        crate::config::ensure_meter_linked();
                     }
                     (KeyCode::Char('g'), _) | (KeyCode::Char('G'), _) => {
                         state.toggle_spectrograph_mode();
@@ -220,16 +224,20 @@ fn run_event_loop_with_state(
                         monitor.set_enabled(
                             state.meter_enabled
                                 || state.spectrograph_enabled
+                                || state.spectrograph_fullscreen
                                 || state.sidetone_enabled,
                         );
+                        crate::config::ensure_meter_linked();
                     }
                     (KeyCode::Char('t'), _) => {
                         state.toggle_meter();
                         monitor.set_enabled(
                             state.meter_enabled
                                 || state.spectrograph_enabled
+                                || state.spectrograph_fullscreen
                                 || state.sidetone_enabled,
                         );
+                        crate::config::ensure_meter_linked();
                     }
                     (KeyCode::Char('?'), _) => {
                         state.toggle_help();
@@ -256,7 +264,7 @@ fn run_event_loop_with_state(
         }
 
         // Update live spectrum and meter telemetry
-        if state.meter_enabled || state.spectrograph_enabled {
+        if state.meter_enabled || state.spectrograph_enabled || state.spectrograph_fullscreen {
             let spec = monitor.get_spectrum();
             state.input_rms_db = spec.rms_db;
             state.spectrum = spec;

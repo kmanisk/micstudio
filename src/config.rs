@@ -264,17 +264,23 @@ pub fn disconnect_monitor_links(source_port: &str) {
                 if cur_port == source_port {
                     if let Some(target) = line.split("|->").nth(1) {
                         let target_clean = target.trim();
-                        let _ = Command::new("pw-link")
-                            .args(["-d", source_port, target_clean])
-                            .output();
+                        // Only disconnect sidetone playback destinations (sinks/headphones), NEVER recording/meter streams
+                        if target_clean.contains("playback_") {
+                            let _ = Command::new("pw-link")
+                                .args(["-d", source_port, target_clean])
+                                .output();
+                        }
                     }
                 }
             } else if line.starts_with(' ') && line.contains("|<-") {
                 if let Some(src) = line.split("|<-").nth(1) {
                     if src.trim() == source_port {
-                        let _ = Command::new("pw-link")
-                            .args(["-d", source_port, &cur_port])
-                            .output();
+                        // Only disconnect if destination port is a playback sink, NEVER meter/recording inputs
+                        if cur_port.contains("playback_") {
+                            let _ = Command::new("pw-link")
+                                .args(["-d", source_port, &cur_port])
+                                .output();
+                        }
                     }
                 }
             } else if !line.starts_with(' ') {
@@ -283,6 +289,13 @@ pub fn disconnect_monitor_links(source_port: &str) {
             }
         }
     }
+}
+
+/// Ensures the live meter and spectrograph input is linked to ghelper-audio
+pub fn ensure_meter_linked() {
+    let _ = Command::new("pw-link")
+        .args(["ghelper-audio:capture_MONO", "micstudio-meter-capture:input_MONO"])
+        .output();
 }
 
 pub fn get_node_id(node_name: &str) -> Result<Option<String>> {

@@ -361,9 +361,11 @@ impl AppState {
         cfg.hear_voice = self.sidetone_enabled;
         CleanMicSettings::sync_hear_voice(self.sidetone_enabled);
         cfg.save()?;
-        self.spectrograph_enabled = self.sidetone_enabled;
         if self.sidetone_enabled {
+            self.spectrograph_enabled = true;
             self.meter_enabled = true;
+        } else if !self.spectrograph_fullscreen {
+            self.spectrograph_enabled = false;
         }
         Ok(())
     }

@@ -139,6 +139,7 @@ impl MicMonitor {
             *pw::keys::MEDIA_TYPE => "Audio",
             *pw::keys::MEDIA_CATEGORY => "Capture",
             *pw::keys::MEDIA_ROLE => "Communication",
+            *pw::keys::TARGET_OBJECT => "ghelper-audio",
             *pw::keys::NODE_NAME => "micstudio-meter-capture",
             *pw::keys::NODE_DESCRIPTION => "MicStudio Audio Spectrum & Meter",
             *pw::keys::AUDIO_CHANNELS => "1",
@@ -283,6 +284,12 @@ impl MicMonitor {
                 | pw::stream::StreamFlags::RT_PROCESS,
             &mut params,
         )?;
+
+        // Ensure explicit link to ghelper-audio even under heavy background audio load
+        thread::spawn(|| {
+            thread::sleep(std::time::Duration::from_millis(50));
+            crate::config::ensure_meter_linked();
+        });
 
         mainloop.run();
         Ok(())
