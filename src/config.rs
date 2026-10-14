@@ -196,6 +196,49 @@ impl CleanMicSettings {
         Self::sync_hear_voice_with_source(enable, is_voice_fx_active());
     }
 
+    pub fn is_sidetone_guarded() -> bool {
+        let sink_out = Command::new("pactl").arg("get-default-sink").output();
+        let default_sink = if let Ok(out) = sink_out {
+            String::from_utf8_lossy(&out.stdout).trim().to_string()
+        } else {
+            String::new()
+        };
+        if default_sink.is_empty() {
+            return false;
+        }
+        let lower_sink = default_sink.to_lowercase();
+        let mut is_headphone = lower_sink.contains("headphone")
+            || lower_sink.contains("headset")
+            || lower_sink.contains("bluez");
+
+        // If it's an ALSA sink (e.g. analog-stereo), query its active port to distinguish 3.5mm wired headphones from built-in speakers
+        if !is_headphone {
+            if let Ok(pactl_sinks) = Command::new("pactl").args(["list", "sinks"]).output() {
+                let stdout_str = String::from_utf8_lossy(&pactl_sinks.stdout);
+                let mut current_sink_matches = false;
+                for line in stdout_str.lines() {
+                    let trimmed = line.trim();
+                    if trimmed.starts_with("Name: ") {
+                        let name = trimmed.trim_start_matches("Name: ").trim();
+                        current_sink_matches = name == default_sink;
+                    } else if current_sink_matches && trimmed.starts_with("Active Port: ") {
+                        let port = trimmed.trim_start_matches("Active Port: ").trim().to_lowercase();
+                        if port.contains("headphone") || port.contains("headset") {
+                            is_headphone = true;
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+
+        let is_speaker = lower_sink.contains("speaker")
+            || lower_sink.contains("peace_gaming")
+            || (lower_sink.contains("analog-stereo") && !is_headphone);
+
+        is_speaker && !is_headphone
+    }
+
     pub fn sync_hear_voice_with_source(enable: bool, _fx_active: bool) {
         // Disconnect any existing monitor links unconditionally from both sources
         disconnect_monitor_links("ghelper-audio:capture_MONO");
@@ -219,16 +262,7 @@ impl CleanMicSettings {
         if !default_sink.is_empty() {
             // Anti-Echo Protection: Never loop microphone audio into built-in laptop speakers
             // or speaker DSP sinks, as acoustic feedback immediately causes infinite echo / squealing.
-            let lower_sink = default_sink.to_lowercase();
-            let is_speaker = lower_sink.contains("analog-stereo")
-                || lower_sink.contains("speaker")
-                || lower_sink.contains("peace_gaming");
-            let is_headphone = lower_sink.contains("headphone")
-                || lower_sink.contains("headset")
-                || lower_sink.contains("bluez");
-
-            if is_speaker && !is_headphone {
-                // Built-in speakers active: suppress sidetone audio loopback to protect against echo
+            if Self::is_sidetone_guarded() {
                 return;
             }
 

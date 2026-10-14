@@ -740,6 +740,25 @@ fn render_rta_bars(frame: &mut Frame, inner: Rect, state: &AppState) {
             Style::default().fg(Color::Cyan)
         };
 
+        if state.spectrum.rms_db <= -85.0 && r == bar_h / 2 {
+            let idle_text = "· · · Waiting for voice signal (-96 dBFS baseline) · · ·";
+            let text_len = idle_text.chars().count();
+            if w > text_len {
+                let start = (w - text_len) / 2;
+                let mut idle_spans = Vec::new();
+                if start > 0 {
+                    idle_spans.push(Span::raw(" ".repeat(start)));
+                }
+                idle_spans.push(Span::styled(idle_text, Style::default().fg(Color::DarkGray)));
+                let rem = w.saturating_sub(start + text_len);
+                if rem > 0 {
+                    idle_spans.push(Span::raw(" ".repeat(rem)));
+                }
+                lines.push(Line::from(idle_spans));
+                continue;
+            }
+        }
+
         for col in 0..w {
             let b = cols[col];
             let level = if b < bands.len() { bands[b] } else { 0.0 };
@@ -959,15 +978,13 @@ fn render_live_controls(frame: &mut Frame, area: Rect, state: &AppState) {
         ),
     ]));
 
-    // 1: Quiet Voice Boost (0..10 dB) - Universal across all models
+    // 1: Output Gain (-24..+12 dB) - Universal across all models
     let is_sel_1 = state.selected_control == 1;
     let mark_1 = if is_sel_1 { "> " } else { "  " };
-    let norm_boost = (state.quiet_boost_db).clamp(0.0, 10.0).round() as usize;
-    let bar_boost = format!(
-        "[{}{}]",
-        "█".repeat(norm_boost),
-        "░".repeat(10 - norm_boost)
-    );
+    let norm_gain = ((state.output_gain_db + 24.0) / 3.6)
+        .clamp(0.0, 10.0)
+        .round() as usize;
+    let bar_gain = format!("[{}{}]", "█".repeat(norm_gain), "░".repeat(10 - norm_gain));
     let line_1_style = if is_sel_1 {
         Style::default()
             .bg(Color::Blue)
@@ -976,24 +993,18 @@ fn render_live_controls(frame: &mut Frame, area: Rect, state: &AppState) {
     } else {
         Style::default().fg(Color::White)
     };
-    let boost_state = if state.quiet_boost_enabled {
-        Span::styled(
-            format!(" [{:+.0} dB] [ON] ", state.quiet_boost_db),
-            Style::default()
-                .fg(Color::Green)
-                .add_modifier(Modifier::BOLD),
-        )
-    } else {
-        Span::styled(" [OFF] +0 dB ", Style::default().fg(Color::DarkGray))
-    };
     lines.push(Line::from(vec![
         Span::styled(mark_1, line_1_style),
-        Span::styled("[2] Quiet Voice Boost   : ", line_1_style),
-        boost_state,
-        Span::styled(format!("{} ", bar_boost), line_1_style),
+        Span::styled(
+            format!(
+                "[2] Output Gain         : {:>+4.1} dB {} ",
+                state.output_gain_db, bar_gain
+            ),
+            line_1_style,
+        ),
     ]));
 
-    // 2: Clean Output Gain (-24..+12 dB) OR Model Voice Boost (-12..+12 dB, default +2.0 dB)
+    // 2: Effect Wet Mix (0..100%) OR Direct Passthrough on Natural Clean
     let is_sel_2 = state.selected_control == 2;
     let mark_2 = if is_sel_2 { "> " } else { "  " };
     let line_2_style = if is_sel_2 {
@@ -1010,44 +1021,49 @@ fn render_live_controls(frame: &mut Frame, area: Rect, state: &AppState) {
         .eq_ignore_ascii_case("Natural Clean");
 
     if is_active_clean {
-        let norm_gain = ((state.output_gain_db + 24.0) / 3.6)
-            .clamp(0.0, 10.0)
-            .round() as usize;
-        let bar_gain = format!("[{}{}]", "█".repeat(norm_gain), "░".repeat(10 - norm_gain));
         lines.push(Line::from(vec![
             Span::styled(mark_2, line_2_style),
-            Span::styled(
-                format!(
-                    "[3] Clean Output Gain   : {:>+4.1} dB {} ",
-                    state.output_gain_db, bar_gain
-                ),
-                line_2_style,
-            ),
+            Span::styled("[3] Effect Wet Mix      : 0% [Direct Clean]", line_2_style),
         ]));
     } else {
-        let active_model_gain = state
-            .presets
-            .iter()
-            .find(|p| p.name.eq_ignore_ascii_case(&state.active_preset_name))
-            .map(|p| p.model_gain_db)
-            .unwrap_or(2.0);
-        let norm_gain = ((active_model_gain + 12.0) / 2.4).clamp(0.0, 10.0).round() as usize;
-        let bar_gain = format!("[{}{}]", "█".repeat(norm_gain), "░".repeat(10 - norm_gain));
+        let norm_mix = (state.effect_mix_pct as f32 / 10.0)
+            .clamp(0.0, 10.0)
+            .round() as usize;
+        let bar_mix = format!("[{}{}]", "█".repeat(norm_mix), "░".repeat(10 - norm_mix));
         lines.push(Line::from(vec![
             Span::styled(mark_2, line_2_style),
             Span::styled(
                 format!(
-                    "[3] Model Voice Boost   : {:>+4.1} dB {} ",
-                    active_model_gain, bar_gain
+                    "[3] Effect Wet Mix      : {:>3}%     {} ",
+                    state.effect_mix_pct, bar_mix
                 ),
                 line_2_style,
             ),
         ]));
     }
 
-    // 3: Effect Wet Mix (0..100%) OR Direct Passthrough on Natural Clean
+    // 3: Sidetone (On/Off)
     let is_sel_3 = state.selected_control == 3;
     let mark_3 = if is_sel_3 { "> " } else { "  " };
+    let sidetone_state = if state.sidetone_enabled {
+        if state.sidetone_guarded {
+            Span::styled(
+                "[ON] (Muted: Laptop Speakers Guard)",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            )
+        } else {
+            Span::styled(
+                "[ON]",
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            )
+        }
+    } else {
+        Span::styled("[OFF]", Style::default().fg(Color::DarkGray))
+    };
     let line_3_style = if is_sel_3 {
         Style::default()
             .bg(Color::Blue)
@@ -1056,33 +1072,16 @@ fn render_live_controls(frame: &mut Frame, area: Rect, state: &AppState) {
     } else {
         Style::default().fg(Color::White)
     };
+    lines.push(Line::from(vec![
+        Span::styled(mark_3, line_3_style),
+        Span::styled("[4] Hear Voice (Monitor): ", line_3_style),
+        sidetone_state,
+    ]));
 
-    if is_active_clean {
-        lines.push(Line::from(vec![
-            Span::styled(mark_3, line_3_style),
-            Span::styled("[4] Effect Wet Mix      : [Direct Clean]", line_3_style),
-        ]));
-    } else {
-        let norm_mix = (state.effect_mix_pct as f32 / 10.0)
-            .clamp(0.0, 10.0)
-            .round() as usize;
-        let bar_mix = format!("[{}{}]", "█".repeat(norm_mix), "░".repeat(10 - norm_mix));
-        lines.push(Line::from(vec![
-            Span::styled(mark_3, line_3_style),
-            Span::styled(
-                format!(
-                    "[4] Effect Wet Mix      : {:>3}%     {} ",
-                    state.effect_mix_pct, bar_mix
-                ),
-                line_3_style,
-            ),
-        ]));
-    }
-
-    // 4: Sidetone (On/Off)
+    // 4: VU Meter (On/Off)
     let is_sel_4 = state.selected_control == 4;
     let mark_4 = if is_sel_4 { "> " } else { "  " };
-    let sidetone_state = if state.sidetone_enabled {
+    let meter_state = if state.meter_enabled {
         Span::styled(
             "[ON]",
             Style::default()
@@ -1102,22 +1101,16 @@ fn render_live_controls(frame: &mut Frame, area: Rect, state: &AppState) {
     };
     lines.push(Line::from(vec![
         Span::styled(mark_4, line_4_style),
-        Span::styled("[5] Hear Voice (Monitor): ", line_4_style),
-        sidetone_state,
+        Span::styled("[5] Level VU Meter      : ", line_4_style),
+        meter_state,
     ]));
 
-    // 5: VU Meter (On/Off)
+    // 5: Spectrograph Mode (RTA / Waterfall)
     let is_sel_5 = state.selected_control == 5;
     let mark_5 = if is_sel_5 { "> " } else { "  " };
-    let meter_state = if state.meter_enabled {
-        Span::styled(
-            "[ON]",
-            Style::default()
-                .fg(Color::Green)
-                .add_modifier(Modifier::BOLD),
-        )
-    } else {
-        Span::styled("[OFF]", Style::default().fg(Color::DarkGray))
+    let spec_mode_str = match state.spectrograph_mode {
+        crate::ui::app::SpectrographMode::RtaBars => "[RTA SPECTRUM]",
+        crate::ui::app::SpectrographMode::Waterfall => "[WATERFALL HEATMAP]",
     };
     let line_5_style = if is_sel_5 {
         Style::default()
@@ -1129,31 +1122,10 @@ fn render_live_controls(frame: &mut Frame, area: Rect, state: &AppState) {
     };
     lines.push(Line::from(vec![
         Span::styled(mark_5, line_5_style),
-        Span::styled("[6] Level VU Meter      : ", line_5_style),
-        meter_state,
-    ]));
-
-    // 6: Spectrograph Mode (RTA / Waterfall)
-    let is_sel_6 = state.selected_control == 6;
-    let mark_6 = if is_sel_6 { "> " } else { "  " };
-    let spec_mode_str = match state.spectrograph_mode {
-        crate::ui::app::SpectrographMode::RtaBars => "[RTA SPECTRUM]",
-        crate::ui::app::SpectrographMode::Waterfall => "[WATERFALL HEATMAP]",
-    };
-    let line_6_style = if is_sel_6 {
-        Style::default()
-            .bg(Color::Blue)
-            .fg(Color::White)
-            .add_modifier(Modifier::BOLD)
-    } else {
-        Style::default().fg(Color::White)
-    };
-    lines.push(Line::from(vec![
-        Span::styled(mark_6, line_6_style),
-        Span::styled("[7] Spectrograph Mode   : ", line_6_style),
+        Span::styled("[6] Spectrograph Mode   : ", line_5_style),
         Span::styled(
             spec_mode_str,
-            if is_sel_6 {
+            if is_sel_5 {
                 Style::default()
                     .fg(Color::Yellow)
                     .add_modifier(Modifier::BOLD)
@@ -1320,7 +1292,7 @@ fn render_help_dialog(frame: &mut Frame, area: Rect, state: &AppState) {
         Line::from(vec![
             Span::styled("Tab / S-Tab    ", key_style),
             Span::styled(
-                ": Cycle 7 controls (DPDFNet / Quiet Boost / Gain / Wet Mix / Hear Voice / VU / Spec)",
+                ": Cycle 6 controls (DPDFNet / Output Gain / Wet Mix / Hear Voice / VU / Spec)",
                 desc_style,
             ),
         ]),

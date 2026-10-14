@@ -60,13 +60,26 @@ fn run_event_loop_with_state(
     terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
     mut state: AppState,
 ) -> Result<()> {
+    // If sidetone was persisted as enabled, establish PipeWire monitor links immediately on launch
+    if state.sidetone_enabled {
+        crate::config::CleanMicSettings::sync_hear_voice(true);
+        state.sidetone_guarded = crate::config::CleanMicSettings::is_sidetone_guarded();
+    }
+
     let should_monitor =
         state.meter_enabled || state.spectrograph_enabled || state.spectrograph_fullscreen;
     let mut monitor = MicMonitor::new(should_monitor);
+    let mut tick_counter: usize = 0;
 
     loop {
         // Redraw current screen state
         terminal.draw(|frame| render_ui(frame, &state))?;
+
+        // Periodically refresh output sink guard state (approx every 1s)
+        tick_counter = (tick_counter + 1) % 30;
+        if tick_counter == 0 {
+            state.sidetone_guarded = crate::config::CleanMicSettings::is_sidetone_guarded();
+        }
 
         // 30Hz when meter or spectrograph is on (smooth 33ms animation), 500ms slow tick when idle
         let active_monitoring =

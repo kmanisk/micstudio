@@ -61,11 +61,7 @@ fn test_render_80x24_minimal_resolution() {
         "DPDFNet live control missing"
     );
     assert!(
-        full_rendered.contains("Quiet Voice Boost"),
-        "Quiet Voice Boost live control missing"
-    );
-    assert!(
-        full_rendered.contains("Clean Output Gain") || full_rendered.contains("Model Voice Boost"),
+        full_rendered.contains("Output Gain"),
         "Output Gain live control missing"
     );
     assert!(
@@ -95,41 +91,33 @@ fn test_render_80x24_minimal_resolution() {
 }
 
 #[test]
-fn test_natural_clean_quiet_boost_vs_fx_wet_mix() {
+fn test_natural_clean_output_gain_vs_fx_wet_mix() {
     let backend = TestBackend::new(80, 24);
     let mut terminal = Terminal::new(backend).unwrap();
     let mut state = AppState::new().unwrap();
 
-    // Natural clean active -> shows Quiet Voice Boost + Clean Output Gain + Direct Broadcast
+    // Natural clean active -> shows Output Gain + Direct Clean
     state.active_preset_name = "Natural Clean".to_string();
     terminal.draw(|f| render_ui(f, &state)).unwrap();
     let buffer = terminal.backend().buffer();
     let clean_rendered: String = buffer.content().iter().map(|c| c.symbol()).collect();
     assert!(
-        clean_rendered.contains("Quiet Voice Boost"),
-        "Quiet Voice Boost must be visible on Natural Clean"
-    );
-    assert!(
-        clean_rendered.contains("Clean Output Gain"),
-        "Clean Output Gain must be shown on Natural Clean"
+        clean_rendered.contains("Output Gain"),
+        "Output Gain must be shown on Natural Clean"
     );
     assert!(
         clean_rendered.contains("Direct Clean"),
         "Direct Clean indicator must be shown on Natural Clean"
     );
 
-    // Deep Voice active -> shows Quiet Voice Boost (universal) + Model Voice Boost (+2.0 dB) + Effect Wet Mix
+    // Deep Voice active -> shows Output Gain (universal) + Effect Wet Mix
     state.active_preset_name = "Deep Voice".to_string();
     terminal.draw(|f| render_ui(f, &state)).unwrap();
     let buffer2 = terminal.backend().buffer();
     let fx_rendered: String = buffer2.content().iter().map(|c| c.symbol()).collect();
     assert!(
-        fx_rendered.contains("Quiet Voice Boost"),
-        "Quiet Voice Boost must be available as universal option across all FX models"
-    );
-    assert!(
-        fx_rendered.contains("Model Voice Boost"),
-        "Model Voice Boost (+2.0 dB default) must be shown on Deep Voice"
+        fx_rendered.contains("Output Gain"),
+        "Output Gain must be shown on Deep Voice"
     );
     assert!(
         fx_rendered.contains("Effect Wet Mix"),
@@ -327,29 +315,27 @@ fn test_shift_j_k_cycle_live_controls() {
 
     // Shift+j goes down
     state.cycle_control_next();
-    assert_eq!(state.selected_control, 1); // QuietBoost
+    assert_eq!(state.selected_control, 1); // OutputGain
     state.cycle_control_next();
-    assert_eq!(state.selected_control, 2); // OutputGain / ModelGain
+    assert_eq!(state.selected_control, 2); // EffectMix
     state.cycle_control_next();
-    assert_eq!(state.selected_control, 3); // EffectMix
+    assert_eq!(state.selected_control, 3); // Sidetone
     state.cycle_control_next();
-    assert_eq!(state.selected_control, 4); // Sidetone
+    assert_eq!(state.selected_control, 4); // VU Meter
     state.cycle_control_next();
-    assert_eq!(state.selected_control, 5); // VU Meter
-    state.cycle_control_next();
-    assert_eq!(state.selected_control, 6); // Spectrograph mode
+    assert_eq!(state.selected_control, 5); // Spectrograph mode
     state.cycle_control_next();
     assert_eq!(state.selected_control, 0); // Wraps around
 
     // Shift+k goes up
-    state.cycle_control_prev();
-    assert_eq!(state.selected_control, 6);
     state.cycle_control_prev();
     assert_eq!(state.selected_control, 5);
     state.cycle_control_prev();
     assert_eq!(state.selected_control, 4);
     state.cycle_control_prev();
     assert_eq!(state.selected_control, 3);
+    state.cycle_control_prev();
+    assert_eq!(state.selected_control, 2);
 }
 
 #[test]

@@ -640,12 +640,6 @@ pub fn list_presets() -> Result<()> {
 }
 
 pub fn set_clean_internal(verbose: bool) -> Result<String> {
-    let mut cfg = CleanMicSettings::load();
-    if !cfg.quiet_voice_boost_enabled || cfg.quiet_voice_boost_db < 0.01 {
-        cfg.quiet_voice_boost_enabled = true;
-        cfg.quiet_voice_boost_db = 4.0;
-        let _ = cfg.save();
-    }
     apply_voice_internal("Natural Clean", verbose)
 }
 
