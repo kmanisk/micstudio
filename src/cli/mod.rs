@@ -131,6 +131,11 @@ pub enum Commands {
         /// Leveling boost in dB (0 to 10 dB, e.g. 4 for +4dB, or 'off'/'status')
         amount: Option<String>,
     },
+    /// Manage UI theme palette (nvchad, catppuccin, tokyonight, nord, terminal)
+    Theme {
+        /// Theme name to set, or omit to view active theme and available options
+        name: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -263,6 +268,7 @@ pub fn handle_cli(cli: Cli) -> Result<()> {
         }
         Some(Commands::Spectrograph { waterfall }) => crate::ui::run_tui_spectrograph(waterfall),
         Some(Commands::Boost { amount }) => handle_boost(amount),
+        Some(Commands::Theme { name }) => handle_theme_cli(name.as_deref()),
     }
 }
 
@@ -526,6 +532,27 @@ fn handle_boost(amount: Option<String>) -> Result<()> {
                     val
                 );
             }
+        }
+    }
+    Ok(())
+}
+
+fn handle_theme_cli(name: Option<&str>) -> Result<()> {
+    use crate::ui::ThemeChoice;
+    let mut cfg = CleanMicSettings::load();
+
+    if let Some(target) = name {
+        let theme = ThemeChoice::from_str_lenient(target);
+        cfg.theme = theme.as_str().to_string();
+        cfg.save()?;
+        println!("Switched theme to: {} ({})", theme.name(), theme.as_str());
+    } else {
+        let active = ThemeChoice::from_str_lenient(&cfg.theme);
+        println!("Active Theme: {} ({})", active.name(), active.as_str());
+        println!("\nAvailable Themes:");
+        for t in ThemeChoice::ALL {
+            let marker = if t == active { "-> " } else { "   " };
+            println!("{}{} - {}", marker, t.as_str(), t.name());
         }
     }
     Ok(())

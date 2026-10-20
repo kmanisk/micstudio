@@ -3,6 +3,7 @@
 use crate::config::{CleanMicSettings, parse_dynamic_stages};
 use crate::dsp::spectrum::LiveSpectrumData;
 use crate::presets::{Preset, PresetManager};
+use crate::ui::theme::ThemeChoice;
 use anyhow::Result;
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -73,6 +74,7 @@ pub struct AppState {
     pub should_quit: bool,
     pub unsaved_changes: bool,
     pub confirm_action: Option<ConfirmAction>,
+    pub theme: ThemeChoice,
 
     // Search and filtering
     pub search_mode: bool,
@@ -129,6 +131,7 @@ impl AppState {
             should_quit: false,
             unsaved_changes: false,
             confirm_action: None,
+            theme: ThemeChoice::from_str_lenient(&cfg.theme),
             search_mode: false,
             search_query: String::new(),
             scroll_offset: 0,
@@ -431,6 +434,12 @@ impl AppState {
         }
     }
 
+    pub fn cycle_theme(&mut self) {
+        self.theme = self.theme.next();
+        self.unsaved_changes = true;
+        self.set_status(format!("UI Theme: {} [Press 'w' to save]", self.theme.name()));
+    }
+
     pub fn discard_and_restore_saved(&mut self) {
         let cfg = CleanMicSettings::load();
         let _ = cfg.apply_dsp_params();
@@ -442,6 +451,7 @@ impl AppState {
         }
         self.output_gain_db = cfg.output_gain_db;
         self.dpdfnet_attenuation = cfg.dpdfnet_attenuation_db;
+        self.theme = ThemeChoice::from_str_lenient(&cfg.theme);
         self.unsaved_changes = false;
         self.set_status("Discarded unsaved tweaks; restored saved settings.".to_string());
     }
@@ -536,6 +546,7 @@ impl AppState {
         cfg.output_gain_db = self.output_gain_db;
         cfg.quiet_voice_boost_enabled = self.quiet_boost_enabled;
         cfg.quiet_voice_boost_db = self.quiet_boost_db;
+        cfg.theme = self.theme.as_str().to_string();
         cfg.save()?;
 
         let mut mgr = PresetManager::new()?;

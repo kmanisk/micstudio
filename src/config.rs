@@ -57,6 +57,8 @@ pub struct CleanMicSettings {
     pub create_virtual_device: bool,
     #[serde(default)]
     pub virtual_device_name: String,
+    #[serde(default)]
+    pub theme: String,
 }
 
 impl Default for CleanMicSettings {
@@ -79,6 +81,7 @@ impl Default for CleanMicSettings {
             telemetry_enabled: false,
             create_virtual_device: false,
             virtual_device_name: "MicStudio Studio Source".to_string(),
+            theme: "nvchad".to_string(),
         }
     }
 }
