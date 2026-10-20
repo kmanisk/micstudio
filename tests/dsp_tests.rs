@@ -551,7 +551,8 @@ fn test_16_delayorama_dry_passthrough_prevents_voice_duplication() {
             "Preset '{}' must have delay_mix == 0.0 to avoid repeating words",
             non_echo_name
         );
-        let payload = p.build_props_payload();
+        let clean_default = micstudio::config::CleanMicSettings::default();
+        let payload = p.build_props_payload_with_clean(&clean_default);
         assert!(
             payload.contains("\"delay:Dry/wet mix\" 0.00"),
             "Payload for '{}' must explicitly set Dry/wet mix to 0.00",
@@ -620,6 +621,7 @@ fn test_18_model_voice_boost_default_and_payload() {
     );
 
     // 2. All creative voice presets default to +2.0 dB
+    let clean_default = micstudio::config::CleanMicSettings::default();
     let all = mgr.all_presets();
     let mut creative_count = 0;
     for p in all {
@@ -632,7 +634,7 @@ fn test_18_model_voice_boost_default_and_payload() {
             "Preset '{}' must default to +2.0 dB model voice boost",
             p.name
         );
-        let payload = p.build_props_payload();
+        let payload = p.build_props_payload_with_clean(&clean_default);
         // 10^(2/20) = 1.258925... formatted to 4 decimals is 1.2589
         assert!(
             payload.contains("\"limiter:Output gain (G)\" 1.2589"),
@@ -651,12 +653,12 @@ fn test_18_model_voice_boost_default_and_payload() {
     let mut custom = mgr.find_preset("Deep Voice").unwrap().clone();
     custom.model_gain_db = 4.0;
     // 10^(4/20) = 1.58489... formatted to 4 decimals is 1.5849
-    let payload_4db = custom.build_props_payload();
+    let payload_4db = custom.build_props_payload_with_clean(&clean_default);
     assert!(payload_4db.contains("\"limiter:Output gain (G)\" 1.5849"));
 
     custom.model_gain_db = -3.0;
     // 10^(-3/20) = 0.70794... formatted to 4 decimals is 0.7079
-    let payload_minus3db = custom.build_props_payload();
+    let payload_minus3db = custom.build_props_payload_with_clean(&clean_default);
     assert!(payload_minus3db.contains("\"limiter:Output gain (G)\" 0.7079"));
 }
 
