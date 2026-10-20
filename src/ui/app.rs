@@ -585,6 +585,9 @@ impl AppState {
                 *g = Some(("Audition: Playing back...".to_string(), Instant::now()));
             }
 
+            // Loudness normalization & gain boost for clear laptop speaker playback
+            boost_and_normalize_audition(wav_path);
+
             let _ = Command::new("pw-play").arg(wav_path).output();
 
             if let Ok(mut g) = status_arc.lock() {
@@ -612,5 +615,50 @@ impl AppState {
             return Some(msg.clone());
         }
         None
+    }
+}
+
+fn boost_and_normalize_audition(path: &str) {
+    if let Ok(mut reader) = hound::WavReader::open(path) {
+        let spec = reader.spec();
+        let samples: Vec<f32> = match spec.sample_format {
+            hound::SampleFormat::Float => reader.samples::<f32>().filter_map(|s| s.ok()).collect(),
+            hound::SampleFormat::Int => {
+                let max_val = (1i64 << (spec.bits_per_sample.saturating_sub(1))) as f32;
+                reader
+                    .samples::<i32>()
+                    .filter_map(|s| s.ok())
+                    .map(|s| s as f32 / max_val)
+                    .collect()
+            }
+        };
+        if !samples.is_empty() {
+            let peak = samples.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
+            // Target loud & clear peak at 0.92 (-0.7 dBFS). Scale up to 16.0x (+24 dB) for quiet speech.
+            let gain = if peak > 0.0001 {
+                (0.92 / peak).clamp(1.5, 16.0)
+            } else {
+                2.0
+            };
+            let norm_path = format!("{}.boosted.wav", path);
+            if let Ok(mut writer) = hound::WavWriter::create(&norm_path, spec) {
+                match spec.sample_format {
+                    hound::SampleFormat::Float => {
+                        for s in samples {
+                            let _ = writer.write_sample((s * gain).clamp(-0.99, 0.99));
+                        }
+                    }
+                    hound::SampleFormat::Int => {
+                        let max_val = (1i64 << (spec.bits_per_sample.saturating_sub(1))) as f32;
+                        for s in samples {
+                            let val = ((s * gain).clamp(-0.99, 0.99) * max_val) as i32;
+                            let _ = writer.write_sample(val);
+                        }
+                    }
+                }
+                let _ = writer.finalize();
+                let _ = std::fs::rename(&norm_path, path);
+            }
+        }
     }
 }

@@ -74,6 +74,7 @@ fn test_render_80x24_minimal_resolution() {
     );
     assert!(full_rendered.contains("j/k"), "Footer hotkeys missing");
     assert!(full_rendered.contains("Space"), "Space hotkey missing");
+    assert!(full_rendered.contains("audition"), "Audition footer key missing");
     assert!(full_rendered.contains("clean"), "Clean hotkey missing");
 
     // Sidetone OFF: meter has no dB readout

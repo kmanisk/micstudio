@@ -1194,6 +1194,8 @@ fn render_bottom_bar(frame: &mut Frame, area: Rect, state: &AppState) {
             Span::styled(format!(": apply{}", sep), action_style),
             Span::styled("Space", key_style),
             Span::styled(format!(": details{}", sep), action_style),
+            Span::styled("p", key_style),
+            Span::styled(format!(": audition{}", sep), action_style),
             Span::styled("m", key_style),
             Span::styled(format!(": graph{}", sep), action_style),
             Span::styled("c", key_style),

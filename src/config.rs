@@ -268,7 +268,30 @@ impl CleanMicSettings {
         // In unified single-device architecture, ghelper-audio provides both clean and active voice FX
         let monitor_source = "ghelper-audio:capture_MONO";
 
-        // Query active default sink
+        if force_speaker {
+            // User requested explicit override: force output to laptop speakers via Dolby_Speaker and hardware analog stereo
+            let _ = Command::new("pw-link")
+                .args([monitor_source, "effect_input.Dolby_Speaker:playback_FL"])
+                .output();
+            let _ = Command::new("pw-link")
+                .args([monitor_source, "effect_input.Dolby_Speaker:playback_FR"])
+                .output();
+            let _ = Command::new("pw-link")
+                .args([monitor_source, "alsa_output.pci-0000_00_1f.3.analog-stereo:playback_FL"])
+                .output();
+            let _ = Command::new("pw-link")
+                .args([monitor_source, "alsa_output.pci-0000_00_1f.3.analog-stereo:playback_FR"])
+                .output();
+            return;
+        }
+
+        // Default behavior (force_speaker == false):
+        // NEVER route to laptop speakers; strictly route to headphones or external sinks.
+        if Self::is_physically_speaker() {
+            return;
+        }
+
+        // Query active default sink (headphones / headset)
         let sink_out = Command::new("pactl").arg("get-default-sink").output();
         let default_sink = if let Ok(out) = sink_out {
             String::from_utf8_lossy(&out.stdout).trim().to_string()
@@ -277,12 +300,6 @@ impl CleanMicSettings {
         };
 
         if !default_sink.is_empty() {
-            // Anti-Echo Protection: Never loop microphone audio into built-in laptop speakers
-            // or speaker DSP sinks, unless force_speaker is explicitly requested.
-            if !force_speaker && Self::is_physically_speaker() {
-                return;
-            }
-
             let left_port = format!("{}:playback_FL", default_sink);
             let right_port = format!("{}:playback_FR", default_sink);
             let _ = Command::new("pw-link")
