@@ -1046,7 +1046,14 @@ fn render_live_controls(frame: &mut Frame, area: Rect, state: &AppState) {
     let is_sel_3 = state.selected_control == 3;
     let mark_3 = if is_sel_3 { "> " } else { "  " };
     let sidetone_state = if state.sidetone_enabled {
-        if state.sidetone_guarded {
+        if state.force_speaker_sidetone {
+            Span::styled(
+                "[ON] (FORCED SPEAKERS)",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            )
+        } else if state.sidetone_guarded {
             Span::styled(
                 "[ON] (Muted: Laptop Speakers Guard)",
                 Style::default()

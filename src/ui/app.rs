@@ -52,6 +52,7 @@ pub struct AppState {
     pub effect_mix_pct: u32,
     pub sidetone_enabled: bool,
     pub sidetone_guarded: bool,
+    pub force_speaker_sidetone: bool,
     pub meter_enabled: bool,
     pub input_rms_db: f32,
     pub spectrograph_enabled: bool,
@@ -105,6 +106,7 @@ impl AppState {
             effect_mix_pct: 100,
             sidetone_enabled: cfg.hear_voice,
             sidetone_guarded: CleanMicSettings::is_sidetone_guarded(),
+            force_speaker_sidetone: cfg.force_speaker_sidetone,
             meter_enabled: cfg.meter_enabled,
             input_rms_db: -96.0,
             spectrograph_enabled: cfg.hear_voice,
@@ -313,12 +315,24 @@ impl AppState {
     }
 
     pub fn toggle_sidetone(&mut self) -> Result<()> {
-        self.sidetone_enabled = !self.sidetone_enabled;
+        let is_speaker = CleanMicSettings::is_physically_speaker();
+        if !self.sidetone_enabled {
+            self.sidetone_enabled = true;
+            self.force_speaker_sidetone = false;
+        } else if is_speaker && !self.force_speaker_sidetone {
+            // Second toggle when on speakers: force speaker override!
+            self.force_speaker_sidetone = true;
+        } else {
+            self.sidetone_enabled = false;
+            self.force_speaker_sidetone = false;
+        }
+
         let mut cfg = CleanMicSettings::load();
         cfg.hear_voice = self.sidetone_enabled;
+        cfg.force_speaker_sidetone = self.force_speaker_sidetone;
+        cfg.save()?;
         CleanMicSettings::sync_hear_voice(self.sidetone_enabled);
         self.sidetone_guarded = CleanMicSettings::is_sidetone_guarded();
-        cfg.save()?;
         if self.sidetone_enabled {
             self.spectrograph_enabled = true;
             self.meter_enabled = true;

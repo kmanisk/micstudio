@@ -34,6 +34,8 @@ pub struct CleanMicSettings {
     #[serde(default)]
     pub hear_voice: bool, // Sidetone / live mic monitor
     #[serde(default)]
+    pub force_speaker_sidetone: bool, // Bypass laptop speaker guard to hear voice through built-in speakers
+    #[serde(default)]
     pub meter_enabled: bool, // Live level meter in TUI
 
     // Legacy fields preserved for TOML compatibility
@@ -66,6 +68,7 @@ impl Default for CleanMicSettings {
             quiet_voice_boost_enabled: true,
             quiet_voice_boost_db: 4.0,
             hear_voice: false,
+            force_speaker_sidetone: false,
             meter_enabled: false,
             rnnoise_enabled: true,
             denoise_blend: 100.0,
@@ -188,15 +191,16 @@ impl CleanMicSettings {
     /// Full apply: DSP parameters + sidetone routing state
     pub fn apply_to_pipewire(&self) -> Result<()> {
         self.apply_dsp_params()?;
-        Self::sync_hear_voice(self.hear_voice);
+        Self::sync_hear_voice_with_force(self.hear_voice, self.force_speaker_sidetone);
         Ok(())
     }
 
     pub fn sync_hear_voice(enable: bool) {
-        Self::sync_hear_voice_with_source(enable, is_voice_fx_active());
+        let cfg = Self::load();
+        Self::sync_hear_voice_with_force(enable, cfg.force_speaker_sidetone);
     }
 
-    pub fn is_sidetone_guarded() -> bool {
+    pub fn is_physically_speaker() -> bool {
         let sink_out = Command::new("pactl").arg("get-default-sink").output();
         let default_sink = if let Ok(out) = sink_out {
             String::from_utf8_lossy(&out.stdout).trim().to_string()
@@ -239,7 +243,20 @@ impl CleanMicSettings {
         is_speaker && !is_headphone
     }
 
+    pub fn is_sidetone_guarded() -> bool {
+        let cfg = Self::load();
+        if cfg.force_speaker_sidetone {
+            return false;
+        }
+        Self::is_physically_speaker()
+    }
+
     pub fn sync_hear_voice_with_source(enable: bool, _fx_active: bool) {
+        let cfg = Self::load();
+        Self::sync_hear_voice_with_force(enable, cfg.force_speaker_sidetone);
+    }
+
+    pub fn sync_hear_voice_with_force(enable: bool, force_speaker: bool) {
         // Disconnect any existing monitor links unconditionally from both sources
         disconnect_monitor_links("ghelper-audio:capture_MONO");
         disconnect_monitor_links("ghelper-audio-fx:capture_MONO");
@@ -261,8 +278,8 @@ impl CleanMicSettings {
 
         if !default_sink.is_empty() {
             // Anti-Echo Protection: Never loop microphone audio into built-in laptop speakers
-            // or speaker DSP sinks, as acoustic feedback immediately causes infinite echo / squealing.
-            if Self::is_sidetone_guarded() {
+            // or speaker DSP sinks, unless force_speaker is explicitly requested.
+            if !force_speaker && Self::is_physically_speaker() {
                 return;
             }
 

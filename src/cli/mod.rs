@@ -537,42 +537,73 @@ fn handle_hear(state: Option<String>) -> Result<()> {
     match action.as_str() {
         "on" | "enable" | "true" | "1" => {
             cfg.hear_voice = true;
+            cfg.force_speaker_sidetone = false;
             cfg.apply_to_pipewire()?;
             cfg.save()?;
-            println!("Microphone Monitor (Hear My Voice): ENABLED (sidetone active).");
+            if CleanMicSettings::is_sidetone_guarded() {
+                println!("Microphone Monitor (Hear My Voice): ENABLED (Muted: Laptop Speakers Guard).");
+                println!("Tip: Run 'micstudio hear force' to force playback through laptop speakers, or press 'p' to audition.");
+            } else {
+                println!("Microphone Monitor (Hear My Voice): ENABLED (sidetone active).");
+            }
+        }
+        "force" | "force-on" | "speaker" => {
+            cfg.hear_voice = true;
+            cfg.force_speaker_sidetone = true;
+            cfg.apply_to_pipewire()?;
+            cfg.save()?;
+            println!("Microphone Monitor (Hear My Voice): ENABLED (FORCED SPEAKERS OVERRIDE). Keep volume moderate to avoid feedback.");
         }
         "off" | "disable" | "false" | "0" => {
             cfg.hear_voice = false;
+            cfg.force_speaker_sidetone = false;
             cfg.apply_to_pipewire()?;
             cfg.save()?;
             println!("Microphone Monitor (Hear My Voice): DISABLED.");
         }
         "status" => {
-            println!(
-                "Microphone Monitor (Hear My Voice): {}",
-                if cfg.hear_voice {
-                    "ENABLED"
+            let status_str = if cfg.hear_voice {
+                if cfg.force_speaker_sidetone {
+                    "ENABLED (FORCED SPEAKERS OVERRIDE)"
+                } else if CleanMicSettings::is_sidetone_guarded() {
+                    "ENABLED (Muted: Laptop Speakers Guard)"
                 } else {
-                    "DISABLED"
+                    "ENABLED"
                 }
-            );
+            } else {
+                "DISABLED"
+            };
+            println!("Microphone Monitor (Hear My Voice): {}", status_str);
         }
         "toggle" => {
-            cfg.hear_voice = !cfg.hear_voice;
+            let is_speaker = CleanMicSettings::is_physically_speaker();
+            if !cfg.hear_voice {
+                cfg.hear_voice = true;
+                cfg.force_speaker_sidetone = false;
+            } else if is_speaker && !cfg.force_speaker_sidetone {
+                cfg.force_speaker_sidetone = true;
+            } else {
+                cfg.hear_voice = false;
+                cfg.force_speaker_sidetone = false;
+            }
             cfg.apply_to_pipewire()?;
             cfg.save()?;
-            println!(
-                "Microphone Monitor (Hear My Voice): {}.",
-                if cfg.hear_voice {
-                    "ENABLED"
+            let status_str = if cfg.hear_voice {
+                if cfg.force_speaker_sidetone {
+                    "ENABLED (FORCED SPEAKERS OVERRIDE)"
+                } else if CleanMicSettings::is_sidetone_guarded() {
+                    "ENABLED (Muted: Laptop Speakers Guard)"
                 } else {
-                    "DISABLED"
+                    "ENABLED"
                 }
-            );
+            } else {
+                "DISABLED"
+            };
+            println!("Microphone Monitor (Hear My Voice): {}.", status_str);
         }
         other => {
             anyhow::bail!(
-                "Unknown state '{}'. Usage: mic hear [on|off|status|toggle]",
+                "Unknown state '{}'. Usage: micstudio hear [on|off|force|status|toggle]",
                 other
             );
         }
