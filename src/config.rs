@@ -64,7 +64,7 @@ impl Default for CleanMicSettings {
         Self {
             schema_version: SETTINGS_VERSION,
             dpdfnet_attenuation_db: 45.0,
-            output_gain_db: 0.0,
+            output_gain_db: 4.5,
             quiet_voice_boost_enabled: true,
             quiet_voice_boost_db: 4.0,
             hear_voice: false,

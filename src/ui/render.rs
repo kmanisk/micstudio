@@ -75,6 +75,9 @@ pub fn render_ui(frame: &mut Frame, state: &AppState) {
     if state.show_details_modal {
         render_details_modal(frame, area, state);
     }
+    if let Some(ref action) = state.confirm_action {
+        render_confirm_dialog(frame, area, action);
+    }
 }
 
 fn render_top_bar(frame: &mut Frame, area: Rect, state: &AppState) {
@@ -954,11 +957,6 @@ fn render_live_controls(frame: &mut Frame, area: Rect, state: &AppState) {
     let is_sel_0 = state.selected_control == 0;
     let mark_0 = if is_sel_0 { "> " } else { "  " };
     let norm_atten = (state.dpdfnet_attenuation / 10.0).clamp(0.0, 10.0).round() as usize;
-    let bar_atten = format!(
-        "[{}{}]",
-        "█".repeat(norm_atten),
-        "░".repeat(10 - norm_atten)
-    );
     let line_0_style = if is_sel_0 {
         Style::default()
             .bg(Color::Blue)
@@ -967,16 +965,18 @@ fn render_live_controls(frame: &mut Frame, area: Rect, state: &AppState) {
     } else {
         Style::default().fg(Color::White)
     };
-    lines.push(Line::from(vec![
+    let mut spans_0 = vec![
         Span::styled(mark_0, line_0_style),
         Span::styled(
             format!(
-                "[1] DPDFNet Suppression : {:>3.0} dB  {} ",
-                state.dpdfnet_attenuation, bar_atten
+                "[1] DPDFNet Suppression : {:>3.0} dB  ",
+                state.dpdfnet_attenuation
             ),
             line_0_style,
         ),
-    ]));
+    ];
+    spans_0.extend(render_gauge_bar(norm_atten, 10, is_sel_0));
+    lines.push(Line::from(spans_0));
 
     // 1: Output Gain (-24..+12 dB) - Universal across all models
     let is_sel_1 = state.selected_control == 1;
@@ -984,7 +984,6 @@ fn render_live_controls(frame: &mut Frame, area: Rect, state: &AppState) {
     let norm_gain = ((state.output_gain_db + 24.0) / 3.6)
         .clamp(0.0, 10.0)
         .round() as usize;
-    let bar_gain = format!("[{}{}]", "█".repeat(norm_gain), "░".repeat(10 - norm_gain));
     let line_1_style = if is_sel_1 {
         Style::default()
             .bg(Color::Blue)
@@ -993,16 +992,18 @@ fn render_live_controls(frame: &mut Frame, area: Rect, state: &AppState) {
     } else {
         Style::default().fg(Color::White)
     };
-    lines.push(Line::from(vec![
+    let mut spans_1 = vec![
         Span::styled(mark_1, line_1_style),
         Span::styled(
             format!(
-                "[2] Output Gain         : {:>+4.1} dB {} ",
-                state.output_gain_db, bar_gain
+                "[2] Output Gain         : {:>+4.1} dB ",
+                state.output_gain_db
             ),
             line_1_style,
         ),
-    ]));
+    ];
+    spans_1.extend(render_gauge_bar(norm_gain, 10, is_sel_1));
+    lines.push(Line::from(spans_1));
 
     // 2: Effect Wet Mix (0..100%) OR Direct Passthrough on Natural Clean
     let is_sel_2 = state.selected_control == 2;
@@ -1029,17 +1030,18 @@ fn render_live_controls(frame: &mut Frame, area: Rect, state: &AppState) {
         let norm_mix = (state.effect_mix_pct as f32 / 10.0)
             .clamp(0.0, 10.0)
             .round() as usize;
-        let bar_mix = format!("[{}{}]", "█".repeat(norm_mix), "░".repeat(10 - norm_mix));
-        lines.push(Line::from(vec![
+        let mut spans_2 = vec![
             Span::styled(mark_2, line_2_style),
             Span::styled(
                 format!(
-                    "[3] Effect Wet Mix      : {:>3}%     {} ",
-                    state.effect_mix_pct, bar_mix
+                    "[3] Effect Wet Mix      : {:>3}%     ",
+                    state.effect_mix_pct
                 ),
                 line_2_style,
             ),
-        ]));
+        ];
+        spans_2.extend(render_gauge_bar(norm_mix, 10, is_sel_2));
+        lines.push(Line::from(spans_2));
     }
 
     // 3: Sidetone (On/Off)
@@ -1143,15 +1145,32 @@ fn render_live_controls(frame: &mut Frame, area: Rect, state: &AppState) {
     ]));
 
     if inner.height >= 8 {
-        let hint_text = if inner.width >= 56 {
-            " [r] Reset model │ [Shift+R] Reset all │ [w] Save tweaks"
+        let (hint_text, hint_style) = if state.unsaved_changes {
+            if inner.width >= 56 {
+                (
+                    " [r] Reset model │ [Shift+R] Reset all │ [w] Save tweaks (Unsaved)",
+                    Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                )
+            } else {
+                (
+                    " [r] Reset │ [Shift+R] All │ [w] Save (Unsaved)",
+                    Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                )
+            }
         } else {
-            " [r] Reset │ [Shift+R] All │ [w] Save tweaks"
+            if inner.width >= 56 {
+                (
+                    " [r] Reset model │ [Shift+R] Reset all │ [w] Save tweaks",
+                    Style::default().fg(Color::DarkGray),
+                )
+            } else {
+                (
+                    " [r] Reset │ [Shift+R] All │ [w] Save tweaks",
+                    Style::default().fg(Color::DarkGray),
+                )
+            }
         };
-        lines.push(Line::from(vec![Span::styled(
-            hint_text,
-            Style::default().fg(Color::DarkGray),
-        )]));
+        lines.push(Line::from(vec![Span::styled(hint_text, hint_style)]));
     }
 
     let p = Paragraph::new(lines);
@@ -1187,6 +1206,15 @@ fn render_bottom_bar(frame: &mut Frame, area: Rect, state: &AppState) {
         ]
     } else {
         let sep = if area.width < 84 { "│ " } else { " │ " };
+        let (save_k_style, save_label, save_a_style) = if state.unsaved_changes {
+            (
+                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                ": save [unsaved]",
+                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+            )
+        } else {
+            (key_style, ": save", action_style)
+        };
         vec![
             Span::styled("j/k", key_style),
             Span::styled(format!(": move{}", sep), action_style),
@@ -1202,8 +1230,8 @@ fn render_bottom_bar(frame: &mut Frame, area: Rect, state: &AppState) {
             Span::styled(format!(": clean{}", sep), action_style),
             Span::styled("r", key_style),
             Span::styled(format!(": reset{}", sep), action_style),
-            Span::styled("w", key_style),
-            Span::styled(": save", action_style),
+            Span::styled("w", save_k_style),
+            Span::styled(save_label, save_a_style),
         ]
     };
 
@@ -1331,5 +1359,90 @@ fn render_help_dialog(frame: &mut Frame, area: Rect, state: &AppState) {
     ];
 
     let p = Paragraph::new(lines);
+    frame.render_widget(p, inner);
+}
+
+fn render_gauge_bar<'a>(norm: usize, max: usize, is_selected: bool) -> Vec<Span<'a>> {
+    let filled = norm.min(max);
+    let empty = max.saturating_sub(filled);
+    let bg = if is_selected { Color::Blue } else { Color::Reset };
+    let fill_style = Style::default().fg(Color::Cyan).bg(bg).add_modifier(Modifier::BOLD);
+    let empty_style = Style::default().fg(Color::DarkGray).bg(bg);
+    let bracket_style = Style::default().fg(Color::White).bg(bg);
+
+    vec![
+        Span::styled("[", bracket_style),
+        Span::styled("■".repeat(filled), fill_style),
+        Span::styled("─".repeat(empty), empty_style),
+        Span::styled("]", bracket_style),
+    ]
+}
+
+pub fn render_confirm_dialog(
+    frame: &mut Frame,
+    area: Rect,
+    action: &crate::ui::app::ConfirmAction,
+) {
+    let popup_w = 64.min(area.width.saturating_sub(4));
+    let popup_h = 9.min(area.height.saturating_sub(2));
+
+    let popup_x = (area.width.saturating_sub(popup_w)) / 2;
+    let popup_y = (area.height.saturating_sub(popup_h)) / 2;
+
+    let popup_rect = Rect::new(popup_x, popup_y, popup_w, popup_h);
+    frame.render_widget(Clear, popup_rect);
+
+    let (title, line1, line2, line4) = match action {
+        crate::ui::app::ConfirmAction::ResetSelected(name) => (
+            " Confirm Reset Preset ",
+            format!("Reset '{}' to factory baseline?", name),
+            "(Restores DPDFNet 45dB, Output Gain +4.5dB, Quiet Boost ON +4dB)".to_string(),
+            "[y / Enter] Confirm Reset   [n / Esc] Cancel".to_string(),
+        ),
+        crate::ui::app::ConfirmAction::ResetAll => (
+            " Confirm Factory Reset All ",
+            "Reset ALL 27 presets & clean mic to factory defaults?".to_string(),
+            "This will overwrite all customized tweaks permanently.".to_string(),
+            "[y / Enter] Confirm Factory Reset   [n / Esc] Cancel".to_string(),
+        ),
+        crate::ui::app::ConfirmAction::QuitUnsaved => (
+            " Unsaved Changes ",
+            "You have modified controls or voice models in this session.".to_string(),
+            "Do you want to save changes permanently to disk before exiting?".to_string(),
+            "[w / y] Save & Exit   [q / n] Discard & Exit   [Esc] Cancel".to_string(),
+        ),
+    };
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(title)
+        .border_style(
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        );
+    let inner = block.inner(popup_rect);
+    frame.render_widget(block, popup_rect);
+
+    let mut lines = Vec::new();
+    lines.push(Line::from(vec![Span::styled(
+        line1,
+        Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+    )]));
+    if !line2.is_empty() {
+        lines.push(Line::from(vec![Span::styled(
+            line2,
+            Style::default().fg(Color::Gray),
+        )]));
+    }
+    lines.push(Line::from(vec![]));
+    lines.push(Line::from(vec![Span::styled(
+        line4,
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD),
+    )]));
+
+    let p = Paragraph::new(lines).alignment(ratatui::layout::Alignment::Center);
     frame.render_widget(p, inner);
 }

@@ -679,7 +679,7 @@ pub fn reset_clean_baseline() -> Result<()> {
     cfg.quiet_voice_boost_enabled = true;
     cfg.quiet_voice_boost_db = 4.0;
     cfg.dpdfnet_attenuation_db = 45.0;
-    cfg.output_gain_db = 0.0;
+    cfg.output_gain_db = 4.5;
     cfg.save()?;
 
     let mut mgr = PresetManager::new()?;
@@ -687,13 +687,13 @@ pub fn reset_clean_baseline() -> Result<()> {
     mgr.set_active_preset("Natural Clean")?;
 
     let _ = apply_voice_internal("Natural Clean", false)?;
-    println!("✓ Reset 'Natural Clean' to exact known-good baseline:");
-    println!("  • Virtual Microphone Source : ghelper-audio (Priority 3000)");
-    println!("  • DPDFNet Neural Suppression: 45.0 dB");
-    println!("  • Quiet Voice Boost         : +4.0 dB [ON] (Threshold -18 dBFS, +7 dB makeup gain)");
-    println!("  • Anti-Shout Protection     : Active (5ms attack, 120ms hold, 500ms release, -2 dBFS ceiling)");
-    println!("  • Output Gain               : +0.0 dB");
-    println!("  • Creative Voice FX         : Bypassed / Dry (100% natural speech)");
+    println!("Reset 'Natural Clean' to exact known-good baseline:");
+    println!("  Virtual Microphone Source : ghelper-audio (Priority 3000)");
+    println!("  DPDFNet Neural Suppression: 45.0 dB");
+    println!("  Quiet Voice Boost         : +4.0 dB [ON] (Threshold -18 dBFS, +7 dB makeup gain)");
+    println!("  Anti-Shout Protection     : Active (5ms attack, 120ms hold, 500ms release, -2 dBFS ceiling)");
+    println!("  Output Gain               : +4.5 dB");
+    println!("  Creative Voice FX         : Bypassed / Dry (100% natural speech)");
     Ok(())
 }
 
@@ -707,7 +707,7 @@ pub fn handle_reset_cli(target: Option<&str>) -> Result<()> {
             cfg.quiet_voice_boost_enabled = true;
             cfg.quiet_voice_boost_db = 4.0;
             cfg.dpdfnet_attenuation_db = 45.0;
-            cfg.output_gain_db = 0.0;
+            cfg.output_gain_db = 4.5;
             cfg.save()?;
 
             let mut mgr = PresetManager::new()?;
@@ -716,11 +716,11 @@ pub fn handle_reset_cli(target: Option<&str>) -> Result<()> {
             let active_name = mgr.active_preset_name().to_string();
             let _ = apply_voice_internal(&active_name, false)?;
 
-            println!("✓ Reset ALL 27 presets & clean mic to factory defaults:");
-            println!("  • Virtual Microphone Source : ghelper-audio (Priority 3000)");
-            println!("  • All 27 factory presets restored to default DSP parameters");
-            println!("  • Clean mic restored to DPDFNet 45dB, Quiet Voice Boost +4dB [ON], Output 0dB");
-            println!("  • Active preset reloaded: {}", active_name);
+            println!("Reset ALL 27 presets & clean mic to factory defaults:");
+            println!("  Virtual Microphone Source : ghelper-audio (Priority 3000)");
+            println!("  All 27 factory presets restored to default DSP parameters");
+            println!("  Clean mic restored to DPDFNet 45dB, Quiet Voice Boost +4dB [ON], Output +4.5dB");
+            println!("  Active preset reloaded: {}", active_name);
             Ok(())
         }
         Some(name) => {
@@ -751,7 +751,7 @@ pub fn set_clean_silent() -> Result<String> {
     set_clean_internal(false)
 }
 
-pub fn apply_voice_internal(preset_name: &str, verbose: bool) -> Result<String> {
+pub fn apply_voice_extended(preset_name: &str, verbose: bool, persist: bool) -> Result<String> {
     let mut mgr = PresetManager::new()?;
     let effective_name =
         if preset_name.eq_ignore_ascii_case("clean") || preset_name.eq_ignore_ascii_case("off") {
@@ -782,10 +782,14 @@ pub fn apply_voice_internal(preset_name: &str, verbose: bool) -> Result<String> 
         let _ = Command::new("wpctl").args(["set-default", &id]).output();
     }
 
-    mgr.set_active_preset(&preset.name)?;
-    let mut cfg = CleanMicSettings::load();
-    cfg.dpdfnet_attenuation_db = preset.dpdfnet_attenuation_db;
-    let _ = cfg.save();
+    if persist {
+        mgr.set_active_preset(&preset.name)?;
+        let mut cfg = CleanMicSettings::load();
+        cfg.dpdfnet_attenuation_db = preset.dpdfnet_attenuation_db;
+        let _ = cfg.save();
+    }
+
+    let cfg = CleanMicSettings::load();
     CleanMicSettings::sync_hear_voice(cfg.hear_voice);
 
     let boost_info = if !is_clean && preset.model_gain_db.abs() > 0.01 {
@@ -819,13 +823,17 @@ pub fn apply_voice_internal(preset_name: &str, verbose: bool) -> Result<String> 
     ))
 }
 
+pub fn apply_voice_internal(preset_name: &str, verbose: bool) -> Result<String> {
+    apply_voice_extended(preset_name, verbose, true)
+}
+
 pub fn apply_voice(preset_name: &str) -> Result<()> {
     apply_voice_internal(preset_name, true)?;
     Ok(())
 }
 
 pub fn apply_voice_silent(preset_name: &str) -> Result<String> {
-    apply_voice_internal(preset_name, false)
+    apply_voice_extended(preset_name, false, false)
 }
 
 fn save_preset(name: &str) -> Result<()> {

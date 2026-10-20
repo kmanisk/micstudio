@@ -620,8 +620,9 @@ fn test_18_model_voice_boost_default_and_payload() {
         "Natural Clean must have model_gain_db == 0.0"
     );
 
-    // 2. All creative voice presets default to +2.0 dB
-    let clean_default = micstudio::config::CleanMicSettings::default();
+    // 2. All creative voice presets default to +2.0 dB (test with 0 dB user output gain for isolation)
+    let mut clean_default = micstudio::config::CleanMicSettings::default();
+    clean_default.output_gain_db = 0.0;
     let all = mgr.all_presets();
     let mut creative_count = 0;
     for p in all {

@@ -452,3 +452,65 @@ fn test_tui_pipeline_graph_and_preset_details() {
     assert!(modal_content.contains("Denoise:"));
     assert!(modal_content.contains("Chain:"));
 }
+
+#[test]
+fn test_live_tweaks_do_not_overwrite_disk_until_save() {
+    let mut state = AppState::new().unwrap();
+    state.unsaved_changes = false;
+
+    // Simulate adjusting output gain via LiveControl
+    state.selected_control = 1; // Output Gain
+    let prev_gain = state.output_gain_db;
+    let _ = state.adjust_selected_control(1);
+    assert!(state.unsaved_changes, "Live tweaking must mark unsaved_changes as true");
+    assert_ne!(state.output_gain_db, prev_gain);
+
+    // Read settings from disk: must NOT be updated yet!
+    let disk_cfg = micstudio::config::CleanMicSettings::load();
+    assert_ne!(disk_cfg.output_gain_db, state.output_gain_db, "Disk settings must not be overwritten by live tweaks");
+
+    // Saving explicitly via 'w'
+    let _ = state.save_current_tweaks();
+    assert!(!state.unsaved_changes, "Saving must clear unsaved_changes");
+    let updated_disk_cfg = micstudio::config::CleanMicSettings::load();
+    assert_eq!(updated_disk_cfg.output_gain_db, state.output_gain_db, "Explicit save must commit to disk");
+}
+
+#[test]
+fn test_reset_preserves_4_5db_output_gain_baseline() {
+    let mut state = AppState::new().unwrap();
+    
+    // Tweak output gain away from 4.5
+    state.output_gain_db = -10.0;
+    
+    // Reset Natural Clean
+    state.active_preset_name = "Natural Clean".to_string();
+    let _ = state.reset_selected_preset();
+    assert_eq!(state.output_gain_db, 4.5, "Resetting Natural Clean must restore +4.5 dB baseline");
+
+    // Reset All Presets
+    state.output_gain_db = -5.0;
+    let _ = state.reset_all_to_factory();
+    assert_eq!(state.output_gain_db, 4.5, "Resetting all presets must restore +4.5 dB baseline");
+}
+
+#[test]
+fn test_confirm_dialog_rendering() {
+    let backend = TestBackend::new(80, 24);
+    let mut terminal = Terminal::new(backend).unwrap();
+    let mut state = AppState::new().unwrap();
+
+    // Reset preset confirmation dialog
+    state.confirm_action = Some(micstudio::ui::app::ConfirmAction::ResetSelected("Natural Clean".to_string()));
+    terminal.draw(|f| render_ui(f, &state)).unwrap();
+    let content: String = terminal.backend().buffer().content().iter().map(|c| c.symbol()).collect();
+    assert!(content.contains("Confirm Reset Preset"));
+    assert!(content.contains("factory baseline"));
+
+    // Unsaved changes confirmation dialog
+    state.confirm_action = Some(micstudio::ui::app::ConfirmAction::QuitUnsaved);
+    terminal.draw(|f| render_ui(f, &state)).unwrap();
+    let content2: String = terminal.backend().buffer().content().iter().map(|c| c.symbol()).collect();
+    assert!(content2.contains("Unsaved Changes"));
+    assert!(content2.contains("Save & Exit"));
+}

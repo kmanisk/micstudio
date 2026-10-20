@@ -107,6 +107,42 @@ fn run_event_loop_with_state(
                     continue;
                 }
 
+                if let Some(action) = state.confirm_action.clone() {
+                    match key.code {
+                        KeyCode::Char('y') | KeyCode::Enter => {
+                            match action {
+                                crate::ui::app::ConfirmAction::ResetSelected(_) => {
+                                    let _ = state.reset_selected_preset();
+                                }
+                                crate::ui::app::ConfirmAction::ResetAll => {
+                                    let _ = state.reset_all_to_factory();
+                                }
+                                crate::ui::app::ConfirmAction::QuitUnsaved => {
+                                    let _ = state.save_current_tweaks();
+                                    state.should_quit = true;
+                                }
+                            }
+                            state.confirm_action = None;
+                        }
+                        KeyCode::Char('w') if matches!(action, crate::ui::app::ConfirmAction::QuitUnsaved) => {
+                            let _ = state.save_current_tweaks();
+                            state.confirm_action = None;
+                            state.should_quit = true;
+                        }
+                        KeyCode::Char('q') | KeyCode::Char('n') if matches!(action, crate::ui::app::ConfirmAction::QuitUnsaved) => {
+                            state.discard_and_restore_saved();
+                            state.confirm_action = None;
+                            state.should_quit = true;
+                        }
+                        KeyCode::Char('n') | KeyCode::Esc => {
+                            state.confirm_action = None;
+                            state.set_status("Cancelled.".to_string());
+                        }
+                        _ => {}
+                    }
+                    continue;
+                }
+
                 // If in search input mode
                 if state.search_mode {
                     match key.code {
@@ -129,10 +165,10 @@ fn run_event_loop_with_state(
 
                 match (key.code, key.modifiers) {
                     (KeyCode::Char('q'), _) => {
-                        state.should_quit = true;
+                        state.request_quit();
                     }
                     (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
-                        state.should_quit = true;
+                        state.request_quit();
                     }
                     // Shift+j / J: cycle down through Live Controls
                     (KeyCode::Char('J'), _) => {
@@ -185,10 +221,13 @@ fn run_event_loop_with_state(
                         monitor.restart();
                     }
                     (KeyCode::Char('R'), _) => {
-                        let _ = state.reset_all_to_factory();
+                        state.request_reset_all();
+                    }
+                    (KeyCode::Char('r'), m) if m.contains(KeyModifiers::SHIFT) => {
+                        state.request_reset_all();
                     }
                     (KeyCode::Char('r'), _) => {
-                        let _ = state.reset_selected_preset();
+                        state.request_reset_selected();
                     }
                     (KeyCode::Char('w'), _) => {
                         let _ = state.save_current_tweaks();
