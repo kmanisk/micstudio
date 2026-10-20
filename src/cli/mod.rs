@@ -1,7 +1,7 @@
 //! CLI Subcommands implementation.
 
 use crate::config::CleanMicSettings;
-use crate::ipc::{IpcRequest, is_engine_running, send_command};
+use crate::ipc::is_engine_running;
 use crate::presets::PresetManager;
 use crate::speaker::{SpeakerDsp, SpeakerVoicing};
 use anyhow::{Context, Result};
@@ -1034,32 +1034,9 @@ pub fn run_verify(preset_filter: Option<&str>, input_file: Option<&std::path::Pa
         resampled_48k.len()
     );
 
-    // 3. Ensure live daemon is running
-    if !is_engine_running() {
-        let _ = Command::new("systemctl")
-            .args(["--user", "start", "micstudio"])
-            .output();
-        for _ in 0..20 {
-            std::thread::sleep(std::time::Duration::from_millis(50));
-            if is_engine_running() {
-                break;
-            }
-        }
-        if !is_engine_running() {
-            let exe = std::env::current_exe()?;
-            Command::new(exe)
-                .args(["daemon", "Natural Clean"])
-                .spawn()?;
-            for _ in 0..20 {
-                std::thread::sleep(std::time::Duration::from_millis(50));
-                if is_engine_running() {
-                    break;
-                }
-            }
-        }
-    }
-    if !is_engine_running() {
-        anyhow::bail!("Failed to connect to MicStudio live engine daemon");
+    // 3. Ensure PipeWire ghelper-audio filter-chain is active
+    if get_node_id("ghelper-audio")?.is_none() {
+        anyhow::bail!("PipeWire filter-chain node 'ghelper-audio' is not active. Check ~/.config/pipewire/pipewire.conf.d/40-mic.conf");
     }
 
     // 4. Setup temporary PipeWire null-sink loopback
@@ -1142,7 +1119,7 @@ pub fn run_verify(preset_filter: Option<&str>, input_file: Option<&std::path::Pa
         let live_path = std::path::PathBuf::from(format!("/tmp/verify_live_{}.wav", slug));
 
         // a. Switch live preset
-        let _ = send_command(&IpcRequest::ApplyPreset(preset.clone()));
+        let _ = apply_voice_internal(&preset.name, false);
         std::thread::sleep(std::time::Duration::from_millis(150));
 
         // b. Render offline
