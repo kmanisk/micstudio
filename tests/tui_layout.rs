@@ -347,6 +347,9 @@ fn test_spectrograph_rendering_and_modes() {
     state.sidetone_enabled = true;
 
     // 1. Embedded RTA Bars mode (when sidetone is active)
+    state.spectrum.rms_db = -30.0;
+    state.spectrum.bands = vec![0.6; 64];
+    state.spectrum.peaks = vec![0.7; 64];
     assert!(terminal.draw(|f| render_ui(f, &state)).is_ok());
     let buf = terminal.backend().buffer().clone();
     let mut rendered = String::new();
@@ -357,6 +360,7 @@ fn test_spectrograph_rendering_and_modes() {
     }
     assert!(rendered.contains("Spectrograph [Active]"));
     assert!(rendered.contains("Live Controls (Shift+j/k or Tab to cycle, h/l to adjust)"));
+    assert!(rendered.contains("█") || rendered.contains("▄") || rendered.contains("─"));
 
     // 2. Waterfall mode
     state.spectrograph_mode = micstudio::ui::app::SpectrographMode::Waterfall;
@@ -513,33 +517,4 @@ fn test_confirm_dialog_rendering() {
     let content2: String = terminal.backend().buffer().content().iter().map(|c| c.symbol()).collect();
     assert!(content2.contains("Unsaved Changes"));
     assert!(content2.contains("Save & Exit"));
-}
-
-#[test]
-fn test_theme_cycling_and_rendering() {
-    let backend = TestBackend::new(80, 24);
-    let mut terminal = Terminal::new(backend).unwrap();
-    let mut state = AppState::new().unwrap();
-
-    for theme in micstudio::ui::theme::ThemeChoice::ALL {
-        state.theme = theme;
-        assert!(terminal.draw(|f| render_ui(f, &state)).is_ok());
-        let content: String = terminal.backend().buffer().content().iter().map(|c| c.symbol()).collect();
-        assert!(content.contains("MICSTUDIO"));
-        assert!(content.contains("DPDFNet Suppression"));
-        assert!(content.contains("Output Gain"));
-    }
-
-    // Verify cycling logic
-    state.theme = micstudio::ui::theme::ThemeChoice::NvChad;
-    state.cycle_theme();
-    assert_eq!(state.theme, micstudio::ui::theme::ThemeChoice::Catppuccin);
-    state.cycle_theme();
-    assert_eq!(state.theme, micstudio::ui::theme::ThemeChoice::TokyoNight);
-    state.cycle_theme();
-    assert_eq!(state.theme, micstudio::ui::theme::ThemeChoice::Nord);
-    state.cycle_theme();
-    assert_eq!(state.theme, micstudio::ui::theme::ThemeChoice::Terminal);
-    state.cycle_theme();
-    assert_eq!(state.theme, micstudio::ui::theme::ThemeChoice::NvChad);
 }

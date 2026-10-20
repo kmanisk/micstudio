@@ -2,11 +2,9 @@
 
 pub mod app;
 pub mod render;
-pub mod theme;
 
 pub use app::AppState;
 pub use render::render_ui;
-pub use theme::ThemeChoice;
 
 use crate::monitor::MicMonitor;
 use anyhow::Result;
@@ -233,9 +231,6 @@ fn run_event_loop_with_state(
                     }
                     (KeyCode::Char('w'), _) => {
                         let _ = state.save_current_tweaks();
-                    }
-                    (KeyCode::F(2), _) => {
-                        state.cycle_theme();
                     }
                     (KeyCode::Char(c), _) if c.is_ascii_digit() && c != '0' => {
                         let num = (c as u8 - b'0') as usize;
