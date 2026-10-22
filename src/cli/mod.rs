@@ -24,6 +24,8 @@ pub enum Commands {
     Status,
     /// List physical inputs, select a node name, or use 'auto' for fallback
     Input { name: Option<String> },
+    /// Reapply the saved preset and microphone settings after audio-server startup
+    Restore,
     /// List all built-in and user voice presets
     List,
     /// Switch to the native clean broadcast microphone and stop optional FX
@@ -215,6 +217,11 @@ pub fn handle_cli(cli: Cli) -> Result<()> {
             for device in crate::input::devices()? {
                 println!("{}\t{}", device.name, device.description);
             }
+            Ok(())
+        }
+        Some(Commands::Restore) => {
+            let manager = PresetManager::new()?;
+            apply_voice_extended(manager.active_preset_name(), false, false)?;
             Ok(())
         }
         Some(Commands::List) => list_presets(),

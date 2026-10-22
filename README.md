@@ -38,7 +38,7 @@ MicStudio is engineered for low-latency, transparent audio processing on Linux w
 * **Universal DPDFNet Neural AI Denoising**:
   Deep neural noise suppression active by default across all presets, eliminating mechanical keyboard clatter, laptop fan hum, and room noise without degrading speech clarity.
 * **Anti-Shout Guard & Safety Limiting**:
-  Compressor and true peak limiter at a `-2.0 dBFS` ceiling protect against clipping distortion during loud callouts or intense gaming moments.
+  Compressor and sample-peak limiter at a `-2.0 dBFS` ceiling protect against clipping distortion during loud callouts or intense gaming moments.
 * **Quiet Voice Boost**:
   Low-level speech leveling (`+4.0 dB` default) ensures quiet whispers and calm tactical callouts remain crisp and audible without amplifying the background noise floor.
 * **Resource Discipline**:
@@ -64,6 +64,12 @@ micstudio input                 # list available devices and preference
 micstudio input <node.name>     # persist a physical input
 micstudio input auto            # automatic physical fallback
 ```
+
+For a binary installed at `~/.local/bin/micstudio`, the optional
+`contrib/pipewire/51-micstudio-restore.conf` fragment runs `micstudio restore`
+once after PipeWire creates its graph, restoring saved DSP values after restart.
+Install it in `~/.config/pipewire/pipewire.conf.d/`; no service or resident helper
+is added.
 
 User and model boosts are applied before the final LSP limiter. Its output gain
 stays at unity so positive boosts preserve the configured sample-peak ceiling.
