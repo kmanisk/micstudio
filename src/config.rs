@@ -14,7 +14,7 @@ fn default_schema_version() -> u32 {
 }
 
 fn default_dpdfnet_attenuation() -> f32 {
-    100.0
+    45.0
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -154,7 +154,7 @@ impl CleanMicSettings {
             };
 
         let props_payload = format!(
-            "{{ params = [ \"dpdfnet:Attenuation Limit (dB)\" {:.1}, \"limiter:Output gain (G)\" {:.4}, \"compressor:Attack threshold (G)\" {:.6}, \"compressor:Makeup gain (G)\" {:.6}, \"compressor:Attack time (ms)\" 5.0, \"compressor:Hold time (ms)\" 120.0, \"compressor:Release time (ms)\" 500.0, \"compressor:Ratio\" 2.0 ] }}",
+            "{{ params = [ \"dpdfnet:Attenuation Limit (dB)\" {:.1}, \"limiter:Input gain (G)\" {:.4}, \"limiter:Output gain (G)\" 1.0000, \"compressor:Attack threshold (G)\" {:.6}, \"compressor:Makeup gain (G)\" {:.6}, \"compressor:Attack time (ms)\" 5.0, \"compressor:Hold time (ms)\" 120.0, \"compressor:Release time (ms)\" 500.0, \"compressor:Ratio\" 2.0 ] }}",
             atten, linear_gain, thresh_linear, makeup_linear
         );
 
@@ -177,7 +177,7 @@ impl CleanMicSettings {
         let linear_gain = 10.0f32.powf(cfg.output_gain_db / 20.0);
 
         let props_payload = format!(
-            "{{ params = [ \"dpdfnet:Attenuation Limit (dB)\" {:.1}, \"limiter:Output gain (G)\" {:.4}, \"compressor:Attack threshold (G)\" 0.251189, \"compressor:Makeup gain (G)\" 1.000000, \"compressor:Attack time (ms)\" 5.0, \"compressor:Hold time (ms)\" 120.0, \"compressor:Release time (ms)\" 500.0, \"compressor:Ratio\" 2.5 ] }}",
+            "{{ params = [ \"dpdfnet:Attenuation Limit (dB)\" {:.1}, \"limiter:Input gain (G)\" {:.4}, \"limiter:Output gain (G)\" 1.0000, \"compressor:Attack threshold (G)\" 0.251189, \"compressor:Makeup gain (G)\" 1.000000, \"compressor:Attack time (ms)\" 5.0, \"compressor:Hold time (ms)\" 120.0, \"compressor:Release time (ms)\" 500.0, \"compressor:Ratio\" 2.5 ] }}",
             atten, linear_gain
         );
 

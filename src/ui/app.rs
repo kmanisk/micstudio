@@ -48,6 +48,9 @@ pub enum ConfirmAction {
 }
 
 pub struct AppState {
+    pub input_devices: Vec<crate::input::InputDevice>,
+    pub input_cursor: usize,
+    pub show_inputs: bool,
     pub presets: Vec<Preset>,
     pub cursor: usize, // Index in filtered_indices
     pub active_preset_name: String,
@@ -104,6 +107,9 @@ impl AppState {
         }
 
         Ok(Self {
+            input_devices: Vec::new(),
+            input_cursor: 0,
+            show_inputs: false,
             presets,
             cursor: initial_cursor,
             active_preset_name: active_name,

@@ -22,6 +22,8 @@ pub struct Cli {
 pub enum Commands {
     /// Print current microphone and voice engine status
     Status,
+    /// List physical inputs, select a node name, or use 'auto' for fallback
+    Input { name: Option<String> },
     /// List all built-in and user voice presets
     List,
     /// Switch to the native clean broadcast microphone and stop optional FX
@@ -204,6 +206,17 @@ pub fn handle_cli(cli: Cli) -> Result<()> {
             crate::ui::run_tui()
         }
         Some(Commands::Status) => show_status(),
+        Some(Commands::Input { name }) => {
+            if let Some(name) = name {
+                crate::input::select(if name == "auto" { "" } else { &name })?;
+            }
+            let selected = crate::input::selected()?;
+            println!("Preferred input: {}", if selected.is_empty() { "auto" } else { &selected });
+            for device in crate::input::devices()? {
+                println!("{}\t{}", device.name, device.description);
+            }
+            Ok(())
+        }
         Some(Commands::List) => list_presets(),
         Some(Commands::Clean) => set_clean(),
         Some(Commands::Reset { target }) => handle_reset_cli(target.as_deref()),
@@ -310,7 +323,7 @@ pub fn show_status() -> Result<()> {
     if let Some(active_p) = mgr.find_preset(active_name) {
         if !active_name.eq_ignore_ascii_case("Natural Clean") {
             println!(
-                "Model Voice Boost       : {:+.1} dB (LSP limiter output gain)",
+                "Model Voice Boost       : {:+.1} dB (before LSP limiter)",
                 active_p.model_gain_db
             );
         }

@@ -638,8 +638,8 @@ fn test_18_model_voice_boost_default_and_payload() {
         let payload = p.build_props_payload_with_clean(&clean_default);
         // 10^(2/20) = 1.258925... formatted to 4 decimals is 1.2589
         assert!(
-            payload.contains("\"limiter:Output gain (G)\" 1.2589"),
-            "Payload for '{}' must configure limiter output gain to +2 dB (1.2589), got: {}",
+            payload.contains("\"limiter:Input gain (G)\" 1.2589"),
+            "Payload for '{}' must configure limiter input gain to +2 dB (1.2589), got: {}",
             p.name,
             payload
         );
@@ -650,17 +650,17 @@ fn test_18_model_voice_boost_default_and_payload() {
         creative_count
     );
 
-    // 3. Modifying model_gain_db dynamically adjusts the limiter output gain in payload
+    // 3. Modifying model_gain_db dynamically adjusts the limiter input gain in payload
     let mut custom = mgr.find_preset("Deep Voice").unwrap().clone();
     custom.model_gain_db = 4.0;
     // 10^(4/20) = 1.58489... formatted to 4 decimals is 1.5849
     let payload_4db = custom.build_props_payload_with_clean(&clean_default);
-    assert!(payload_4db.contains("\"limiter:Output gain (G)\" 1.5849"));
+    assert!(payload_4db.contains("\"limiter:Input gain (G)\" 1.5849"));
 
     custom.model_gain_db = -3.0;
     // 10^(-3/20) = 0.70794... formatted to 4 decimals is 0.7079
     let payload_minus3db = custom.build_props_payload_with_clean(&clean_default);
-    assert!(payload_minus3db.contains("\"limiter:Output gain (G)\" 0.7079"));
+    assert!(payload_minus3db.contains("\"limiter:Input gain (G)\" 0.7079"));
 }
 
 #[test]
@@ -792,4 +792,18 @@ fn test_22_preset_manager_reload_from_disk() {
     // Reload from disk
     assert!(mgr.reload_from_disk().is_ok());
     assert_eq!(mgr.all_presets().len(), count_before);
+}
+
+#[test]
+fn test_boosts_preserve_final_limiter_headroom() {
+    let mgr = PresetManager::new().unwrap();
+    let mut settings = micstudio::config::CleanMicSettings::default();
+    settings.output_gain_db = 12.0;
+    for preset in mgr.all_presets() {
+        let payload = preset.build_props_payload_with_clean(&settings);
+        assert!(payload.contains("\"limiter:Input gain (G)\""));
+        assert!(payload.contains("\"limiter:Output gain (G)\" 1.0000"));
+    }
+    let migrated: micstudio::config::CleanMicSettings = toml::from_str("").unwrap();
+    assert_eq!(migrated.dpdfnet_attenuation_db, 45.0);
 }

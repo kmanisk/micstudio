@@ -19,13 +19,13 @@ use std::io::stdout;
 use std::time::Duration;
 
 pub fn run_tui() -> Result<()> {
+    let state = AppState::new()?;
     enable_raw_mode()?;
     let mut out = stdout();
     execute!(out, EnterAlternateScreen)?;
     let backend = CrosstermBackend::new(out);
     let mut terminal = Terminal::new(backend)?;
 
-    let state = AppState::new()?;
     let res = run_event_loop_with_state(&mut terminal, state);
 
     disable_raw_mode()?;
@@ -36,13 +36,13 @@ pub fn run_tui() -> Result<()> {
 }
 
 pub fn run_tui_spectrograph(waterfall: bool) -> Result<()> {
+    let mut state = AppState::new()?;
     enable_raw_mode()?;
     let mut out = stdout();
     execute!(out, EnterAlternateScreen)?;
     let backend = CrosstermBackend::new(out);
     let mut terminal = Terminal::new(backend)?;
 
-    let mut state = AppState::new()?;
     state.spectrograph_fullscreen = true;
     if waterfall {
         state.spectrograph_mode = app::SpectrographMode::Waterfall;
@@ -94,6 +94,31 @@ fn run_event_loop_with_state(
             if let Event::Key(key) = event::read()? {
                 // Ignore key release events on Windows/terminals that report them
                 if key.kind == crossterm::event::KeyEventKind::Release {
+                    continue;
+                }
+
+                if state.show_inputs {
+                    match key.code {
+                        KeyCode::Esc | KeyCode::Char('q') => state.show_inputs = false,
+                        KeyCode::Char('j') | KeyCode::Down => {
+                            state.input_cursor = (state.input_cursor + 1).min(state.input_devices.len());
+                        }
+                        KeyCode::Char('k') | KeyCode::Up => {
+                            state.input_cursor = state.input_cursor.saturating_sub(1);
+                        }
+                        KeyCode::Enter => {
+                            let name = if state.input_cursor == 0 { "" } else {
+                                &state.input_devices[state.input_cursor - 1].name
+                            };
+                            let result = crate::input::select(name);
+                            state.set_status(match result {
+                                Ok(()) => "Input selection saved; automatic fallback remains enabled.".into(),
+                                Err(error) => format!("Input selection failed: {error}"),
+                            });
+                            state.show_inputs = false;
+                        }
+                        _ => {}
+                    }
                     continue;
                 }
 
@@ -164,6 +189,18 @@ fn run_event_loop_with_state(
                 }
 
                 match (key.code, key.modifiers) {
+                    (KeyCode::Char('i'), _) => {
+                        match crate::input::devices() {
+                            Ok(devices) => {
+                                let selected = crate::input::selected().unwrap_or_default();
+                                state.input_cursor = devices.iter().position(|d| d.name == selected)
+                                    .map(|index| index + 1).unwrap_or(0);
+                                state.input_devices = devices;
+                                state.show_inputs = true;
+                            }
+                            Err(error) => state.set_status(format!("Input discovery failed: {error}")),
+                        }
+                    }
                     (KeyCode::Char('q'), _) => {
                         state.request_quit();
                     }

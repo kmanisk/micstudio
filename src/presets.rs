@@ -279,7 +279,7 @@ impl Preset {
             (0.251189f32, 1.000000f32, 2.5f32)
         };
 
-        // Output limiter gain: includes model volume boost + user output gain
+        // Apply model and user boost before limiting; post-limiter gain stays at unity.
         let user_gain_linear = 10.0f32.powf(clean_cfg.output_gain_db / 20.0);
         let model_gain_linear = if is_clean {
             user_gain_linear
@@ -317,7 +317,7 @@ impl Preset {
                 \"compressor:Attack time (ms)\" 5.0, \
                 \"compressor:Hold time (ms)\" 120.0, \
                 \"compressor:Release time (ms)\" 500.0, \
-                \"limiter:Output gain (G)\" {:.4} \
+                \"limiter:Input gain (G)\" {:.4}, \"limiter:Output gain (G)\" 1.0000 \
             ] }}",
             self.dpdfnet_attenuation_db,
             self.pitch_semitones,

@@ -48,6 +48,31 @@ MicStudio is engineered for low-latency, transparent audio processing on Linux w
 
 ## Live Audio Controls
 
+Press `i` to choose a physical capture input with `j`/`k` and `Enter`. The
+selection is saved by WirePlumber; an unavailable input falls back to an
+available physical microphone and is restored when it returns. Bluetooth
+handsfree inputs and virtual loopback sources are excluded. Applications keep
+recording from the single `ghelper-audio` source.
+
+Install the input policy into the existing WirePlumber process:
+
+```sh
+install -Dm644 contrib/wireplumber/51-micstudio-input.conf ~/.config/wireplumber/wireplumber.conf.d/51-micstudio-input.conf
+install -Dm644 contrib/wireplumber/micstudio-input.lua ~/.local/share/wireplumber/scripts/micstudio-input.lua
+systemctl --user restart wireplumber
+micstudio input                 # list available devices and preference
+micstudio input <node.name>     # persist a physical input
+micstudio input auto            # automatic physical fallback
+```
+
+User and model boosts are applied before the final LSP limiter. Its output gain
+stays at unity so positive boosts preserve the configured sample-peak ceiling.
+
+Run unit and TUI checks with `bash scripts/test-isolated.sh`. These tests write
+preferences and apply presets, so the script uses a temporary home and prevents
+connections to the live audio servers. `tests/monitor_check.rs` contains separate
+hardware integration tests and requires a functioning PipeWire capture graph.
+
 MicStudio exposes 7 real-time audio parameters in the interactive TUI (cycle via `Tab` or `Shift+J`/`Shift+K`, adjust via `h`/`l` or `←`/`→`):
 
 | Control | Description | Range / Default |

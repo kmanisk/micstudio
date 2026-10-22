@@ -69,6 +69,20 @@ pub fn render_ui(frame: &mut Frame, state: &AppState) {
     render_middle(frame, chunks[1], state);
     render_bottom_bar(frame, chunks[2], state);
 
+    if state.show_inputs {
+        let mut lines = vec![Line::from("Choose capture input: j/k, Enter save, Esc cancel")];
+        for (index, description) in std::iter::once("Automatic (available physical microphone)")
+            .chain(state.input_devices.iter().map(|device| device.description.as_str())).enumerate() {
+            lines.push(Line::styled(
+                format!("{} {}", if index == state.input_cursor { ">" } else { " " }, description),
+                Style::default().fg(if index == state.input_cursor { Color::Cyan } else { Color::White }),
+            ));
+        }
+        frame.render_widget(Clear, chunks[1]);
+        frame.render_widget(Paragraph::new(lines).block(Block::default().borders(Borders::ALL)
+            .title("Capture input (i)")), chunks[1]);
+    }
+
     if state.show_help {
         render_help_dialog(frame, area, state);
     }
@@ -1258,6 +1272,10 @@ fn render_help_dialog(frame: &mut Frame, area: Rect, state: &AppState) {
     let stages_line = state.dynamic_stages.join(" → ");
 
     let lines = vec![
+        Line::from(vec![
+            Span::styled("i              ", key_style),
+            Span::styled(": Select and persist physical capture input", desc_style),
+        ]),
         Line::from(vec![
             Span::styled("j / k / ↑ / ↓  ", key_style),
             Span::styled(": Navigate presets list (skips headers)", desc_style),
