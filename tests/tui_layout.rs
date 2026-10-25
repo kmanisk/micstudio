@@ -457,8 +457,11 @@ fn test_tui_pipeline_graph_and_preset_details() {
     assert!(modal_content.contains("Chain:"));
 }
 
+static DISK_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[test]
 fn test_live_tweaks_do_not_overwrite_disk_until_save() {
+    let _lock = DISK_LOCK.lock().unwrap();
     let mut state = AppState::new().unwrap();
     state.unsaved_changes = false;
 
@@ -482,6 +485,7 @@ fn test_live_tweaks_do_not_overwrite_disk_until_save() {
 
 #[test]
 fn test_reset_preserves_4_5db_output_gain_baseline() {
+    let _lock = DISK_LOCK.lock().unwrap();
     let mut state = AppState::new().unwrap();
     
     // Tweak output gain away from 4.5
