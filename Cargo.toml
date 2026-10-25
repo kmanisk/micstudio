@@ -1,6 +1,6 @@
 [package]
 name = "micstudio"
-version = "0.1.0"
+version = "1.0.1"
 edition = "2024"
 authors = ["Kumar Manisk <mathewmanisk699@gmail.com>"]
 description = "High-performance native Rust audio studio, voice preset manager, and real-time DSP pipeline for PipeWire"

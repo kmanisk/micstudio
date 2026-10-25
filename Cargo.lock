@@ -1115,7 +1115,7 @@ dependencies = [
 
 [[package]]
 name = "micstudio"
-version = "0.1.0"
+version = "1.0.1"
 dependencies = [
  "anyhow",
  "clap 4.6.7",
