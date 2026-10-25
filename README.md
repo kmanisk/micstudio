@@ -2,9 +2,10 @@
 
 **High-performance, minimal native Rust audio studio, voice preset manager, and real-time DSP pipeline for PipeWire.**
 
-[![Rust](https://img.shields.io/badge/rust-2024%20edition-orange.svg)](https://www.rust-lang.org/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Platform: Linux](https://img.shields.io/badge/platform-Linux%20(PipeWire)-red.svg)](https://pipewire.org/)
+[![Rust](https://img.shields.io/badge/Rust-2024%20edition-000000?style=flat-square&logo=rust&logoColor=white)](https://www.rust-lang.org/)
+[![Stars](https://img.shields.io/github/stars/kmanisk/micstudio?style=flat-square)](https://github.com/kmanisk/micstudio/stargazers)
+[![License](https://img.shields.io/github/license/kmanisk/micstudio?style=flat-square)](LICENSE)
+[![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20PipeWire-FCC624?style=flat-square&logo=linux&logoColor=black)](https://pipewire.org/)
 
 ---
 
